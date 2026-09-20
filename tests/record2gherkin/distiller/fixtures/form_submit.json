@@ -1,0 +1,136 @@
+{
+  "session": {
+    "started_at": "2026-09-20T13:30:00.000Z",
+    "origin": "https://shop.example.com"
+  },
+  "events": [
+    {
+      "seq": 1,
+      "ts": 1695005000000,
+      "type": "navigate",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 2,
+      "ts": 1695005001100,
+      "type": "input",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "Full name",
+        "testid": null,
+        "id": "full-name",
+        "ordinal": null,
+        "form_label": "Full name"
+      },
+      "value": "Ada Lovelace",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 3,
+      "ts": 1695005002400,
+      "type": "input",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "textarea",
+        "role": "textbox",
+        "name": "Shipping note",
+        "testid": null,
+        "id": "note",
+        "ordinal": null,
+        "form_label": "Shipping note"
+      },
+      "value": "Deliver to \"Gate 3\" before 6pm",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 4,
+      "ts": 1695005003600,
+      "type": "select",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "select",
+        "role": "combobox",
+        "name": "Country",
+        "testid": null,
+        "id": "country",
+        "ordinal": null,
+        "form_label": "Country"
+      },
+      "value": "United Kingdom",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 5,
+      "ts": 1695005004700,
+      "type": "input",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "Card password",
+        "testid": null,
+        "id": "card-password",
+        "ordinal": null,
+        "form_label": "Card password"
+      },
+      "value": "<masked>",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 6,
+      "ts": 1695005005900,
+      "type": "click",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "button",
+        "role": "button",
+        "name": "Delete",
+        "testid": null,
+        "id": null,
+        "ordinal": 2,
+        "form_label": null
+      },
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 7,
+      "ts": 1695005007000,
+      "type": "submit",
+      "url": "https://shop.example.com/checkout",
+      "page_title": "Checkout",
+      "target": {
+        "tag": "form",
+        "role": "generic",
+        "name": "",
+        "testid": null,
+        "id": "checkout-form",
+        "ordinal": null,
+        "form_label": null
+      },
+      "value": null,
+      "dom_snapshot": { "assert_texts": ["Order placed successfully"] }
+    },
+    {
+      "seq": 8,
+      "ts": 1695005008600,
+      "type": "navigate",
+      "url": "https://shop.example.com/confirmation",
+      "page_title": "Order confirmation",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    }
+  ]
+}
