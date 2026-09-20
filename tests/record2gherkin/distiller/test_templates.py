@@ -5,6 +5,8 @@ Every case renders the deterministic skeleton through the public API (``polisher
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from record2gherkin.distiller import DistillResult, distill_events
 from tests.record2gherkin.distiller.conftest import (
@@ -240,8 +242,24 @@ def test_feature_scenario_naming_rule() -> None:
     )
     text = skeleton_of(events)
 
-    assert "Feature: Recorded flow on https://staging.example.com" in text
+    assert "Feature: Recorded flow on https_staging_example_com" in text
     assert "Scenario: Staging Store" in text
+
+
+def test_title_sanitized_to_filename_safe() -> None:
+    """回归（pilot002 复盘，阶段 1 分析 P1-4）：标题会被上游用作 JUnit 文件名，
+    含 ``://`` 的 origin 会产生 ``//`` 被当作目录分隔符导致写文件失败。标题必须文件名安全。"""
+    events = make_flow(
+        [
+            make_event(1, "navigate", url="http://127.0.0.1:8461/", page_title="MiniShop 商城"),
+            make_event(2, "click", target={"name": "Go", "role": "button"}),
+        ],
+        origin="http://127.0.0.1:8461",
+    )
+    text = skeleton_of(events)
+
+    assert "Feature: Recorded flow on http_127_0_0_1_8461" in text
+    assert re.search(r"[^\w\- \u4e00-\u9fff]", text.splitlines()[0].removeprefix("Feature: ")) is None
 
 
 def test_naming_rule_defaults_without_origin_and_title() -> None:

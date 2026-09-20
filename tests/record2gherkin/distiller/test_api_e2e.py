@@ -24,7 +24,7 @@ def test_end_to_end_sample_flow(login_flow: dict) -> None:
 
     assert len(_lines_starting_with(feature, "Feature:")) == 1
     assert len(_lines_starting_with(feature, "Scenario:")) == 1
-    assert feature.startswith("Feature: Recorded flow on https://staging.example.com")
+    assert feature.startswith("Feature: Recorded flow on https_staging_example_com")
     assert "Scenario: Staging Store" in feature
     assert len(step_lines(feature)) == 12
 
@@ -94,7 +94,7 @@ def test_hercules_helper_integration(tmp_path: Path, login_flow: dict) -> None:
     records = asyncio.run(split_feature_file(str(feature_path), str(tmp_path / "split")))
 
     assert len(records) == 1
-    assert records[0]["feature"] == "Recorded flow on https://staging.example.com"
+    assert records[0]["feature"] == "Recorded flow on https_staging_example_com"
     assert records[0]["scenario"] == "Staging Store"
     assert 'Given I am on the page "https://staging.example.com/login"' in Path(records[0]["output_file"]).read_text(encoding="utf-8")
 
