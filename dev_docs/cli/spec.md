@@ -84,10 +84,10 @@ argparse 自身错误（未知子命令、缺参数）退出 2，与总表一致
 ```python
 def record_events(url: str, out_path: Path, *, headless: bool = False,
                   max_duration_s: float = 0.0,
-                  stop_when: Callable[[], bool] | None = None) -> int
+                  stop_when: Callable[[Any], bool] | None = None) -> int
 ```
 
-- `stop_when` 返回 True 即触发正常结束（SIGINT handler 与 `--max-duration` 都装进默认实现；测试注入自己的 lambda）。
+- `stop_when` 收到轮询循环传入的 `page` 实参（`stop_when(page)`），返回 True 即触发正常结束。生产默认包装器——SIGINT Event 与 `--max-duration`——忽略该参数；测试闭包用 `page` 驱动真实交互（如两次 `page.click(...)`）后返回 True。
 - playwright 用 **sync API**（与 `dev_runs/integration_smoke.py` 一致），在主线程同步执行；SIGINT handler 只 `set()` 一个 `threading.Event`，不做任何 playwright 调用。
 - 步骤（每步失败即清理后返回对应退出码）：
   1. 惰性 `from playwright.sync_api import sync_playwright`；`chromium.launch(headless=headless)`；`new_page()`；`page.goto(url, timeout=30_000)`。启动/跳转失败 → error 日志，exit 2。
@@ -97,7 +97,7 @@ def record_events(url: str, out_path: Path, *, headless: bool = False,
   5. 停止序列：`page.evaluate("R2GRecorder.stop()")` → `raw = page.evaluate("R2GRecorder.getJSON()")` → `json.loads(raw)` 校验含 `session`/`events` 键 → 写 `out_path`（utf-8，目录 `mkdir(parents=True, exist_ok=True)`）→ finally 关浏览器。
   6. info 摘要：输出路径（绝对）、事件数、`session.origin`。exit 0。
 - SIGINT 语义：第一次 → `Event.set()`（走正常保存路径，exit 0）；保存期间第二次 → 直接 `raise SystemExit(130)`。
-- 0 事件也是合法产物（照常保存，附 warning `empty_recording`）。
+- 仅含初始 navigate（无任何用户事件，`len(events) <= 1`）也是合法产物：照常保存，附 warning `empty_recording`。`events=[]` 不可达——`R2GRecorder.start()` 恒 push 一条初始 navigate 事件（recorder.js:518），playwright 模式下事件数下限为 1。
 
 ### 2.2 fixture 复用
 
@@ -128,7 +128,10 @@ def record_events(url: str, out_path: Path, *, headless: bool = False,
 4. 若 --test-data：
      json 解析失败                 → exit 2
      顶层非 object                → exit 2（报"必须为 JSON object"）
-     值 ∈ {str,int,float,bool}    → 接受，str() 化
+     值 ∈ {str,int,float}         → 接受，str() 化
+     值为 bool/null、或 str() 化后为空白 → 该键视为未提供（对齐 distiller `_clean_test_data_values`
+       契约，events.py:146-159 同样丢弃这类值）：不入 provided/unused 统计，needed 侧对应键
+       走 missing 警告并保留占位符——消除"CLI 报 filled=N 而产物仍留占位符"的虚报路径
      值 ∈ {object,list}           → exit 2（逐个列出坏键）
 5. missing = needed − provided；unused = provided − needed
 6. 最终蒸馏（只此一次触 LLM，且仅当 --polish）：
@@ -186,7 +189,7 @@ dev_runs/cli_runs/cli_20260921-140301/demo-events/
 - `status / passed / duration_s / cost_usd / total_tokens`（None 打 `-`）。
 - `junit_xml`（result 自带，绝对路径）；HTML：junit 同 stem `.html` 存在则一并打印。
 - `proofs = <project_root>/proofs`、`log_files = <project_root>/log_files`：存在才打印。
-- `failure_message` 存在时打印（截 500 字符；内容已被 runner 脱敏）。
+- `failure_message` 存在时打印（截 500 字符；**打印前 CLI 侧先 `mask_secret(message, key)` 二次脱敏**——runner 只对子进程 stdout 过 `mask_secret`（runner.py:305），`STATUS_FAILED` 的 `failure_message` 直接取自 JUnit XML（runner.py:350-370）不经脱敏；`mask_secret` 为 runner 公开函数，空 key 时原样返回）。
 - 末行提示：`uv run python -m record2gherkin analyze <run_dir>`。
 
 ### 5.4 `--dry-run` 分支
@@ -242,7 +245,7 @@ analyzer=None 时 attributor 全链确定性（attributor spec §5：同输入 `
 | 占位符无值 | generate | warning 逐键列出 `missing_test_data:<k>`，保留占位符 | 0 |
 | 执行超时 | run | `STATUS_TIMEOUT`，failure_message 含 stdout 尾部 | 3 |
 | JUnit 缺失/不可读 | run | `STATUS_NO_JUNIT` | 4 |
-| JUnit 判失败 | run | 正常摘要 + failure_message | 1 |
+| JUnit 判失败 | run | 正常摘要 + failure_message（经 CLI 侧 `mask_secret` 二次脱敏） | 1 |
 | analyze 时 JUnit 缺失/不可解析 | analyze | `AttributionError` 捕获 | 3 |
 | `--llm` 但配置缺键 | analyze | warning + 降级纯规则继续 | 0 |
 | record 中浏览器关闭/跨文档导航 | record | error 日志（含已知限制说明），不保存 | 2 |
@@ -262,8 +265,8 @@ A 组 全局（test_parser.py）
 
 B 组 record（test_record.py，playwright 本地 chromium）
 4. `test_manual_mode_prints_bookmarklet_usage` / `record --manual` / 退出 0，日志含 bookmarklet.txt 绝对路径、"R2GRecorder.copy()"、只注入一次警示；无浏览器启动
-5. `test_record_fixture_roundtrip` / 注入 `stop_when`（驱动 2 次点击后返回 True）+ `--out` 指向 tmp / 退出 0；文件可 json 解析，`events` 长度 ≥3，含 `session.origin`
-6. `test_record_empty_recording_warns` / `stop_when` 立即 True / 退出 0，产物 events=[]，日志含 `empty_recording`
+5. `test_record_fixture_roundtrip` / `stop_when(page)` 闭包用 page 驱动 2 次真实点击（`page.click(...)`）后返回 True，`--out` 指向 tmp / 退出 0；文件可 json 解析，`events` 长度 ≥3，含 `session.origin`
+6. `test_record_empty_recording_warns` / `stop_when(page)` 立即返回 True（无任何用户交互）/ 退出 0；产物 `events` 恰 1 条（type=navigate，即 start() 的初始 navigate），日志含 `empty_recording`
 7. `test_record_unreachable_url_exit_2` / `http://127.0.0.1:1/`（连接拒绝）+ `--headless` / 退出 2
 
 C 组 generate（test_generate.py）
@@ -272,7 +275,7 @@ C 组 generate（test_generate.py）
 10. `test_generate_test_data_fills_placeholder` / 事件含 masked input(seq=6) + `--test-data {"password_6":"s3cret"}` / feature 无 `{{TEST_DATA`、含 `s3cret`，摘要 filled=1
 11. `test_generate_missing_test_data_warns` / 同上但 `--test-data {"password_9":"x"}` / 退出 0；日志含 `missing_test_data:password_6` 与 `unused_test_data:password_9`；feature 保留 `{{TEST_DATA:password_6}}`
 12. `test_generate_no_test_data_flag_warns_needed_keys` / masked 事件、不给 `--test-data` / 退出 0；日志列出 `password_6`
-13. `test_generate_bad_test_data_shape_exit_2` / `--test-data` 指向 JSON 数组文件 / 退出 2；另例：值为 object 的键 → 退出 2
+13. `test_generate_bad_test_data_shape_exit_2` / `--test-data` 指向 JSON 数组文件 / 退出 2；另例：值为 object 的键 → 退出 2；再例：值 `true` 或 `"  "`（空白串）→ 退出 0，按未提供处理（日志含 `missing_test_data:<k>`，feature 保留占位符，摘要 filled=0）
 14. `test_generate_bad_events_exit_2` / 文件不存在与非法 JSON 两例 / 退出 2
 15. `test_generate_polish_factory_seam_fallback` / `--polish` + monkeypatch `_make_polisher` 返回抛错 fake / 退出 0；feature=骨架；日志含 `fallback_reason`（`polish_error:` 前缀）
 16. `test_generate_polish_factory_seam_adopted` / fake 返回合法 grounded 润色稿 / 摘要 `used_llm_polish=True`，feature 为润色稿
@@ -284,7 +287,7 @@ D 组 run（test_run.py）
 20. `test_run_dry_run_key_masked` / 假 key + `--dry-run` / 日志全文不含假 key 明文
 21. `test_run_missing_feature_exit_2` / 不存在的 feature / 退出 2
 22. `test_run_missing_key_file_exit_2` / 非 dry-run，`--key-file` 指向不存在路径 / 退出 2（不启动任何子进程）
-23. `test_run_status_exit_codes` / monkeypatch `record2gherkin.cli.run_feature` 返回 `STATUS_PASSED/FAILED/TIMEOUT/NO_JUNIT` 四种假 `RunResult` / 退出码分别 0/1/3/4；FAILED 与 NO_JUNIT 的 failure_message 出现在日志
+23. `test_run_status_exit_codes` / monkeypatch `record2gherkin.cli.run_feature` 返回 `STATUS_PASSED/FAILED/TIMEOUT/NO_JUNIT` 四种假 `RunResult`（failure_message 内嵌假 key 明文）/ 退出码分别 0/1/3/4；FAILED 与 NO_JUNIT 的 failure_message 出现在日志，且日志中假 key 明文零命中（JUnit 路径经 CLI 侧 mask_secret 脱敏的断言）
 24. `test_run_summary_lists_artifacts` / 假 passed 结果且测试预建 `opt/proofs`、`opt/log_files`、junit 同 stem `.html` / 日志含三路径；不存在的路径不出现
 25. `test_run_next_step_hint` / 假结果 / 日志含 `analyze <run_dir>` 提示行
 
@@ -302,7 +305,7 @@ E 组 analyze（test_analyze.py，合成产物目录）
 1. `uv run pytest tests/record2gherkin/cli -q` 全绿（§8 全部用例）；全程无网络、无真实 key、无外部站点。
 2. `uv run python -m record2gherkin --help` 退出 0 且列出四子命令；`uv run python -m record2gherkin record --manual` 退出 0。
 3. P0-2：对含 masked input 的样例事件执行 `generate --test-data`，产物中 `{{TEST_DATA:` 零命中且值入文；不给值时产物保留占位符且 stderr 级日志列出所需键（用例 10-12）。
-4. `run --dry-run` 在无 key 文件环境下可用（用例 19），且任何日志/落盘文件中以假 key 明文 grep 零命中（用例 20 推广到全命令）。
+4. `run --dry-run` 在无 key 文件环境下可用（用例 19），且任何日志/落盘文件中以假 key 明文 grep 零命中（用例 20 推广到全命令；非 dry-run 的 failure_message JUnit 路径由用例 23 的明文零命中断言覆盖）。
 5. `record（file:// fixture，headless）→ generate → run --dry-run → analyze（合成目录）` 四连真机冒烟脚本走通，退出码依次 0。
 6. `make fmt` 后 `black --check record2gherkin/cli.py record2gherkin/__main__.py tests/record2gherkin/cli`（line-length 200）通过。
 7. `git status` 确认未改 `pyproject.toml`、`uv.lock`、`testzeus_hercules/`（密钥红线：任何文档/日志不含 key 明文）。
