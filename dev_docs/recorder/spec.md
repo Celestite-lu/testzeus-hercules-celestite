@@ -138,7 +138,7 @@ blur 仅作为 input 定稿的触发器（§4.3），不产生独立事件。
 
 - 记录 `click`（主键）。目标向上取最近的有语义祖先：若 target 是 `inside <label>`、`<span>` 等 inline 元素，`event.target` 即可（name 逻辑自带祖先 label 能力）；若 `event.target` 为 `document/html/body` 且 name 为空 → 丢弃（点空白不是步骤）。
 - 一次物理点击产生一条 click；双击产生两条 click，接受（忠实记录，蒸馏器负责合并）。
-- 点 submit 按钮会同时产生 click + submit 两条事件，接受（见 §4.5）。
+- 点 submit 按钮会同时产生 click + submit 两条事件，接受（忠实记录；两条事件由蒸馏器 templates 层确定性去重为一条 click 步骤，见 §4.5）。
 
 ### 4.3 input（定稿制）
 
@@ -154,6 +154,7 @@ blur 仅作为 input 定稿的触发器（§4.3），不产生独立事件。
 ### 4.5 submit
 
 - `document` 上捕获 `submit` → 记录一条，`target` 指向 `<form>` 元素（tag=form，name 按 §2.1.2 计算，通常取不到为空串，可接受）。
+- **蒸馏去重（跨模块契约，P0-1）**：上述 click + submit 双事件由蒸馏器 **templates 层确定性去重**（零模型依赖，不属润色层白名单）：**保留 click 步骤**（带按钮 name hint，重放定位更稳）、**丢弃 submit 步骤**（重放时 click 已触发提交/跳转，该步骤落在新页面上、表单已不存在）、**保留该 submit 事件 `dom_snapshot.assert_texts` 对应的 Then 步骤**（位置在 click 步骤的 Then 之后）。前驱非 click 的 submit（如 Enter 键直接提交）不去重。规则原文见 distiller spec §2.2。
 
 ### 4.6 navigate
 

@@ -101,3 +101,50 @@ All done! ... 12 files would be left unchanged.
 - 公开入口：`distill_events(events, polisher=None, test_data_values=None) -> DistillResult`、`distill_file(events_path, output_path=None, polisher=None, test_data_values=None) -> DistillResult`；`Polisher` 协议 = `async polish(skeleton_text, events) -> str`。
 - DOM/事件字段消费面：`session.origin`、事件 `seq/type/url/page_title/value/target.*/dom_snapshot.assert_texts`；`ts`、`target.testid` 不参与逻辑（透传/不消费），schema 漂移只影响 warning 不影响合法性。
 - 未做（spec §8 Out of Scope 内）：多 Scenario 切分、Background/Outline、中文模板、复杂断言推理、数据抽取、test_data 自动注入、CLI 与模型路由调优。
+
+## 补记 — P0-1 click+submit 双事件去重（2026-09-20 合并后修复）
+
+**背景与缺陷**：录制器对一次 submit 按钮点击恒产出 `click(seq N)` + `submit(seq N+1)` 两条事件（recorder spec §4.5）。修复前蒸馏器逐条落步 → `When I click on the "提交订单" button` + `When I submit the "form" form`；重放时 click 已触发提交/跳转，submit 步骤落在新页面上（表单已不存在）必然失败。原契约悬空：recorder spec §4.2 写"蒸馏器负责合并"，而 distiller polisher 白名单只允许合并 input。
+
+**修复（`record2gherkin/distiller/templates.py`，规则层，零模型依赖红线不变）**：
+
+- 新增确定性判定 `_dedupes_preceding_click(events, index)`：`events[index]` 为 `submit` 且紧邻前驱（按 `seq` 排序、过滤未知类型后的流）为 `click` → 该 submit 的**步骤**不生成。
+- `build_skeleton` 循环据此只跳过步骤行，**不** `continue`：该 submit 事件 `dom_snapshot.assert_texts` 的 Then 步骤照常生成，位置在 click 步骤及其 Then 之后。前驱非 click 的 submit（如 Enter 键直接提交）照常生成步骤。
+- 不做的事（守边界）：不改 `api.py` / `factcheck.py` / `polisher.py`（含润色白名单）；公开 API 与 `DistillResult` 结构不变；不新增 warning 词；`navigate` 无 url 时"整条事件含 assert 一起跳过"的既有行为（§4 已知问题 3）未动。
+
+**可观察效果**（`tests/record2gherkin/distiller/fixtures/form_submit.json`，seq 6 click → seq 7 submit）：
+
+```
+When I click on the "Delete" button (occurrence 2)
+Then I should see "Order placed successfully"     # 来自被去重的 submit 事件，保留
+When I navigate to "https://shop.example.com/confirmation"
+```
+
+**测试**（`tests/record2gherkin/distiller/test_templates.py` 新增 3 条，共 25 条；全套 88 条）：
+
+| 新用例 | 断言 |
+|---|---|
+| `test_click_then_submit_dedupes_submit_step` | 提交订单按钮 click + 紧邻 submit → 仅 1 条 click 步骤、无 submit 步骤 |
+| `test_deduped_submit_keeps_its_assertions_after_click` | 被去重 submit 的 assert_texts → Then 保留，且在 click 步骤的 Then 之后 |
+| `test_standalone_submit_keeps_its_step` | 孤立 submit（前驱为 input）→ submit 步骤照常生成 |
+
+**被新规则改判的既有断言（1 处，必要且为最小改动）**：`test_api_e2e.py::test_end_to_end_form_flow` 原断言的 `'When I submit the "form" form' in feature` 与新规则直接矛盾（该 fixture 的 submit 前驱正是 click）。改判为 `assert "When I submit" not in feature`（并加注说明该 fixture 即双事件形态），fixture 与其他断言未动；该用例因此同时成为 P0-1 端到端回归。用例总数 85 → 88，原 85 条全部保留（仅上述 1 条期望值按新规则更新）。
+
+**测试命令与结果（修复后）**：
+
+```console
+$ uv run pytest tests/record2gherkin/distiller -q
+...................................................................      [100%]
+67 passed in 2.31s
+
+$ uv run pytest tests/record2gherkin -q
+........................................................................ [ 81%]
+................                                                         [100%]
+88 passed in 13.52s
+
+$ uv run isort record2gherkin/distiller tests/record2gherkin/distiller && uv run black -l 200 record2gherkin/distiller tests/record2gherkin/distiller
+$ uv run black -l 200 --check record2gherkin/distiller tests/record2gherkin/distiller
+12 files would be left unchanged.       # isort --check-only 亦通过
+```
+
+无 skip / xfail；全程离线（无 key、无浏览器、无网络）。**spec 同步**：`dev_docs/distiller/spec.md` §2.2 映射表新增 "submit（紧邻前驱为 click）" 行并注明 "规则层唯一例外"；`dev_docs/recorder/spec.md` §4.2 与 §4.5 注明该双事件由蒸馏器 templates 层确定性去重（保 click 弃 submit 步骤、保留 Then）。

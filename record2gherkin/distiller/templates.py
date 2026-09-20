@@ -74,6 +74,18 @@ def _render_value(event: RecordedEvent, parsed: ParsedInput, warnings: list[str]
     return escape_literal(folded)
 
 
+def _dedupes_preceding_click(events: tuple[RecordedEvent, ...], index: int) -> bool:
+    """True when the ``submit`` at ``index`` is the twin of an immediately preceding ``click`` (spec §2.2).
+
+    One physical submit-button press reaches the recorder as two DOM events, so the stream carries
+    ``click(seq N)`` + ``submit(seq N+1)`` for a single user action (recorder spec §4.5). The click step
+    keeps the button's name hint and therefore survives; the submit step would be replayed on the
+    already-navigated page (the form is gone). A submit without a click predecessor - e.g. an Enter-key
+    submission - has no twin and renders normally.
+    """
+    return index > 0 and events[index].type == "submit" and events[index - 1].type == "click"
+
+
 def _render_step(event: RecordedEvent, parsed: ParsedInput, first_navigate: bool, warnings: list[str]) -> str | None:
     """One step line for ``event``; ``None`` when the event has to be skipped (spec §2.2 navigate rule)."""
     target = event.target
@@ -113,11 +125,16 @@ def build_skeleton(parsed: ParsedInput) -> Skeleton:
     steps: list[str] = []
     seen_assertions: set[str] = set()
     navigate_seen = False
-    for event in events:
-        step = _render_step(event, parsed, first_navigate=not navigate_seen, warnings=warnings)
-        if step is None:
-            continue
-        steps.append(step)
+    for index, event in enumerate(events):
+        step: str | None = None
+        if not _dedupes_preceding_click(events, index):
+            step = _render_step(event, parsed, first_navigate=not navigate_seen, warnings=warnings)
+            if step is None:
+                # Skipped event (navigate without URL): its assertions are dropped with it (spec §2.2).
+                continue
+        # A deduped submit contributes no step of its own, but its assertions still render below.
+        if step is not None:
+            steps.append(step)
         navigate_seen = navigate_seen or event.type == "navigate"
         for text in event.assert_texts:
             if text in seen_assertions:

@@ -71,9 +71,10 @@ tests/record2gherkin/
 | input | `When I enter "{value}" in the "{hint}" field` | `value` = `event.value`（掩码处理见 §2.3）；`hint` = `target.form_label` → `target.name` → `target.id` → `target.tag` → `"field"` |
 | select | `When I select "{value}" from the "{hint}" dropdown` | `value` = `event.value`；`hint` = `target.form_label` → `target.name` → `target.id` → `"dropdown"` |
 | submit | `When I submit the "{hint}" form` | `hint` = `target.name` → `target.form_label` → `"form"`。（PLAN §3.2 表未覆盖 submit，此为补充定义，schema v1 合法事件类型） |
+| submit（紧邻前驱为 click） | 不生成自身步骤 | **click+submit 去重（确定性规则，P0-1）**：录制器对一次 submit 按钮点击恒产出 `click(seq N)` + `submit(seq N+1)` 两条事件（recorder spec §4.5），"紧邻前驱是 click" 即该双事件形态 → 丢弃本 submit 事件的步骤，保留 click 步骤（它带按钮 name hint，下游定位更有价值）。本 submit 的 `assert_texts` 对应的 Then 步骤**照常生成**，位置在该 click 步骤及其 Then 之后。前驱非 click 的 submit（如 Enter 键直接提交，前驱为 input）不适用本行，照常生成步骤。 |
 | 任意事件后 | `Then I should see "{text}"` | 对该事件 `dom_snapshot.assert_texts` 中每个非空 text 各生成一行；跨 Scenario 去重（同文本只在首次出现处生成，后续跳过）；保持首次出现顺序 |
 
-规则层**不做**任何合并/省略/改写：连续 input、重复 click 原样逐步输出（合并是润色层的职责）。
+规则层**不做**任何合并/省略/改写：连续 input、重复 click 原样逐步输出（这些合并是润色层的职责）。**唯一例外**是上表的 click→submit 去重——它是确定性规则（零模型依赖），因此属规则层，而不是润色层白名单的一部分。
 
 ### 2.3 掩码值（密码）填充
 

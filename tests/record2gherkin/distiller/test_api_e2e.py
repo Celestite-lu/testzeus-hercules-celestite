@@ -45,10 +45,12 @@ def test_end_to_end_sample_flow(login_flow: dict) -> None:
 
 
 def test_end_to_end_form_flow(form_flow: dict) -> None:
-    """Spec §2.2: submit, ordinal suffix and the second navigate render correctly end to end."""
+    """Spec §2.2: the click+submit dedup, the ordinal suffix and the second navigate render end to end."""
     feature = distill_events(form_flow).feature_text
 
-    assert 'When I submit the "form" form' in feature
+    # this fixture submits right after a click, i.e. the recorded twin of a submit-button press (P0-1):
+    # the click step survives, the submit step is deduped, and the submit's assertion survives below
+    assert "When I submit" not in feature
     assert 'When I click on the "Delete" button (occurrence 2)' in feature
     assert 'When I navigate to "https://shop.example.com/confirmation"' in feature
     assert 'When I enter "Deliver to \\"Gate 3\\" before 6pm" in the "Shipping note" field' in feature
