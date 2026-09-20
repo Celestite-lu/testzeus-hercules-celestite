@@ -49,6 +49,7 @@ dev_runs/experiments/<exp_id>/    # 运行产物（gitignore，§8）
 | list | `filter_button` | button | 应用筛选 |
 | list | `product_N`（N=1..3） | 卡片：名称/价格/按钮 | 无线耳机 Pro ¥299 / 桌面台灯 ¥129 / 陶瓷马克杯 ¥39；按钮均为 加入清单（同名×3，ord-1..3） |
 | list | `list_status` | p | 共 3 件商品（动态更新，见 §1.4） |
+| list | `cart_count` | p（头部） | 清单（0）（动态更新，同 list_status 形态） |
 | order | `nav_home` | a href="#/" | 返回列表 |
 | order | `name_input` / `email_input` / `address_input` | input | label：收货人姓名 / 联系邮箱 / 收货地址 |
 | order | `shipping_select` | select（标准配送/次日达/门店自提） | label：配送方式 |
@@ -83,6 +84,7 @@ dev_runs/experiments/<exp_id>/    # 运行产物（gitignore，§8）
 - **确定性**：同 `(mutation, seed)` 任意次渲染逐字节相同；渲染不读时钟、不读环境、不用 `random` 模块（需要随机处一律 `hashlib.sha256`）。
 - 变换发生在**结构层**（对 §1.2 注册表/分组列表操作），序列化成 HTML 前完成；不做 HTML 字符串改写。
 - 不变量（所有 M 共同保证）：元素的可访问名文本、`order_result` 等断言文案、option 文本、页面标题不变——除 M4 按其规则改写按钮 accessible name 外。
+- **内联 JS 与 HTML 同源（防页面自坏）**：§1.4 全部客户端行为的元素定位由 render_page 从**变异后**的注册表内插生成（或仅用事件委托+表单语义等 M3 不可见的结构绑定）；JS 源码中不得出现受 M3 影响的定位属性字面量（硬编码 id/class/data-testid）。否则 M3 渲染出的页面自身行为失效（搜索不执行、计数不更新），会把"引擎语义失败"污染成"页面坏了"，主指标不可信。
 
 ### 2.2 各变异的精确变换
 
@@ -96,7 +98,7 @@ dev_runs/experiments/<exp_id>/    # 运行产物（gitignore，§8）
 
 ### 2.3 可重复性约定
 
-- M3/M4 的 seed 由 sweep 按 `seed = int(sha1(f"{exp_id}:{run_id}").hexdigest()[:8], 16)` 确定性分配并写入 manifest（§8）——同 exp_id 重跑同格得到同页面字节，满足"可重复"；不同 run 间 seed 互异，满足 M3"动态"语义。
+- M3/M4 的 seed 从**不含 seed 的格坐标**确定性派生，派生函数落在 sweep.py：`seed = int(sha1(f"{exp_id}:{method}:{flow}:{mutation}").hexdigest()[:8], 16)`；run_id 在 seed 确定后才拼装为 `<method>__<flow>__<mutation>__s<seed>`（§4.1）——派生输入不含 run_id，无循环引用。结果写入 manifest（§8）：同 exp_id 重跑同格得到同页面字节，满足"可重复"；同 exp 内任意两格 seed 互异，满足 M3"动态"语义（单测 F31 断言）。
 - M1/M2 忽略 seed（渲染结果与 seed 无关），manifest 中仍记录传入值。
 
 ## 3. Demo 服务（demo_server.py）
@@ -177,7 +179,9 @@ HEADLESS="true"
    `Surv(method, M) = Σ_i pass(i, M, method) / |F|`
    汇报口径：M1/M2/M3 三列均值为"主指标存活率"；M4 单列，不并入。
 3. **成本**（仅 generated）：
-   单次 `cost_usd`/`total_tokens` 取自 JUnit 解析（优先 testcase 级展平键 `usage_including_cached_inference.total_cost` / `*.total_tokens`，缺回落 suite 级 `total_execution_cost`/`total_token_used`，再缺为 None）；
+   单次 `cost_usd` 取 testcase 级展平键 `usage_including_cached_inference.total_cost`（唯一取数键），缺回落 suite 级 `total_execution_cost`，再缺为 None；
+   `total_tokens` 键选取与 `junit_helper.py:154-158` 同一规则：**优先**取 `usage_including_cached_inference.` 前缀且 `.total_tokens` 结尾的全部键（可多键求和，多模型分列时相加），**仅当无此前缀键时**才回落其余 `*.total_tokens`——禁止不加前缀地全取 `*.total_tokens`（会把 usage_including 与 usage_excluding 双计，token 虚高一倍）；无任何键时为 None。
+   suite 级 `total_execution_cost`/`total_token_used` 属性值为字符串（上游 `str()` 写入），解析需 float()/int() 转换，转换失败按 None 计。
    `AvgCost = Σ cost_usd(非 None) / count(非 None)`，`TotalCost = Σ cost_usd(非 None)`，并报告 `cost_missing_count`（None 不计 0，不虚构）。
 4. 失败运行（timeout / no_junit / 断言失败）全部进入分母、按 0 计，并在报告中单列失败清单（run_id + failure_message 摘要）。
 
@@ -186,13 +190,13 @@ HEADLESS="true"
 | 方法 | 单元格 | 运行数 | 执行方式 | 成本上限 |
 |---|---|---|---|---|
 | generated（Hercules） | F1-F6 × {M0,M1,M2,M3,M4} | 30 | 子进程，串行 | 30 × $0.13 = $3.90 |
-| generated pilot（D2，单独记录，不入正式表） | F3 × {M0, M3}（+≤2 次基础设施重试） | ≤4 | 子进程 | ≤$0.52 |
-| 基础设施故障重跑缓冲（仅 timeout/no_junit/服务崩溃；**用例失败不重跑**） | — | ≤6 | 子进程 | ≤$0.78 |
+| generated pilot（D2，单独记录，不入正式表） | F3 × {M0, M3} + F2 × M0（+≤1 次基础设施重试） | ≤4 | 子进程 | ≤$0.52 |
+| 基础设施故障重跑缓冲（sweep 阶段；仅 timeout/no_junit/服务崩溃，**用例失败不重跑**） | — | ≤5 | 子进程 | ≤$0.65 |
 | baseline（本地 playwright） | F1-F6 × {M0..M4} | 30 | sweep 内同步驱动 | 0 |
-| **Hercules 合计** | | **≤40** | | **≤$5.20（红线 $10）** |
+| **Hercules 合计** | | **≤39（护栏红线 ≤40）** | | **≤$5.07（红线 $10）** |
 
-- `test_matrix.py` 用例断言矩阵单元格数 = 60、Hercules 计数（30+pilot 上限+缓冲上限）≤ 40——护栏落在单测里。
-- 基线与 generated 同格共享同一 `(mutation, seed)` 页面状态（服务端状态在两种方法间保持），保证同格可比。
+- `test_matrix.py` 用例断言矩阵单元格数 = 60、Hercules 计数（30+4+5）= 39 ≤ 40——护栏落在单测里；seed 派生（§2.3）同格恒等、同 exp 内互异（F30）。
+- pilot 的 F2×M0 专项首验 `(occurrence N)` 同名按钮步骤的执行侧行为（§12）；两种方法同格共享同一 `(mutation, seed)` 页面状态（服务端状态在方法间保持），保证同格可比。
 
 ## 8. sweep 编排（sweep.py）与产物
 
@@ -216,33 +220,36 @@ HEADLESS="true"
 9. M4：各参与元素文本 ∈ 改写表；同 seed 确定；`order_result`/状态文案不变
 10. M4 概率性：固定枚举 8 个 seed，至少出现 2 种不同改写组合
 11. 渲染纯净性：产物不含时钟戳/随机数痕迹（两次不同时刻渲染逐字节相同）
+12. JS 绑定完整性：M3 渲染产物中，内联 JS 引用的每个 id/data-testid 字面量均存在于该产物 DOM；M0 同理（防 §2.1 内联 JS 硬编码被 M3 打断、页面自身行为失效）
 
 **B 组 服务（test_demo_server.py，线程内起服务 + urllib）**
-12. `/healthz` 返回当前 (mutation, seed)，默认 M0/0
-13. `POST /__control` 合法体后 `/` 内容随 M0→M3 变化（同 URL 不同 HTML）
-14. `POST /__control` 非法 mutation → 400 且状态不变
+13. `/healthz` 返回当前 (mutation, seed)，默认 M0/0
+14. `POST /__control` 合法体后 `/` 内容随 M0→M3 变化（同 URL 不同 HTML）
+15. `POST /__control` 非法 mutation → 400 且状态不变
 
 **C 组 JUnit 解析（test_runner_parse.py，手写 fixture XML 字符串）**
-15. 通过用例（无 failure，含 cost/token 属性）→ passed=True 且数值正确
-16. 失败用例（含 `<failure>` 与 message）→ passed=False 且 message 提取
-17. 无 cost 属性 → cost_usd=None（非 0）；suite 级 `total_execution_cost` 兜底路径生效
-18. 畸形 XML → 返回明确定义的 error 形态（不静默当通过）
-19. 多 testcase（防御，正常不出现）→ passed=all 且 testcase_count>1
+16. 通过用例（无 failure，含 cost/token 属性）→ passed=True 且数值正确
+17. 失败用例（含 `<failure>` 与 message）→ passed=False 且 message 提取
+18. 无 cost 属性 → cost_usd=None（非 0）；suite 级 `total_execution_cost` 兜底路径生效（含字符串值 float()/int() 转换）
+19. 畸形 XML → 返回明确定义的 error 形态（不静默当通过）
+20. 多 testcase（防御，正常不出现）→ passed=all 且 testcase_count>1
+21. token 键选取：同时存在 `usage_including_*.total_tokens` 与 `usage_excluding_*.total_tokens` 时只取前者（多键求和、不双计）；仅有后者时回落；两键皆无 → None
 
 **D 组 指标（test_metrics.py）**
-20. FirstPass 计算（含某流程失败）
-21. Surv 按 (method, mutation) 分组正确；空组/|F|=0 防御
-22. 成本聚合：None 排除出均值、missing 计数正确
-23. timeout/no_junit 计入分母且按 0 计
+22. FirstPass 计算（含某流程失败）
+23. Surv 按 (method, mutation) 分组正确；空组/|F|=0 防御
+24. 成本聚合：None 排除出均值、missing 计数正确
+25. timeout/no_junit 计入分母且按 0 计
 
 **E 组 执行器 dry（test_runner_parse.py，monkeypatch subprocess，不真跑）**
-24. cmd 含 `--input-file/--project-base/--output-path` 三参数且为绝对路径；key 不在 cmd 任何元素中
-25. child env 含 §4.3 全部键；`ENABLE_TELEMETRY=0`；key 仅存在于 env 值
-26. `mask_secret`：含 key 的文本替换后无残留；空 key 时原样返回
-27. 超时路径：以 0.5s timeout 跑 `sleep 5` 子进程 → status="timeout"
+26. cmd 含 `--input-file/--project-base/--output-path` 三参数且为绝对路径；key 不在 cmd 任何元素中
+27. child env 含 §4.3 全部键；`ENABLE_TELEMETRY=0`；key 仅存在于 env 值
+28. `mask_secret`：含 key 的文本替换后无残留；空 key 时原样返回
+29. 超时路径：以 0.5s timeout 跑 `sleep 5` 子进程 → status="timeout"
 
 **F 组 矩阵护栏（test_matrix.py）**
-28. 矩阵 6×5×2=60 格；Hercules 计数（30+4+6）≤ 40 断言成立
+30. 矩阵 6×5×2=60 格；Hercules 计数（30+4+5）= 39 ≤ 40 断言成立
+31. seed 派生（§2.3 公式）：同格 (exp_id, method, flow, mutation) 多次派生恒等；同 exp 内任意两格派生值互异
 
 ## 10. 验收标准
 
@@ -263,5 +270,7 @@ HEADLESS="true"
 - litellm 接受的 deepseek 模型串与 base_url 精确组合（§4.3 回写）。
 - hash URL（`...#/order`）经 open_url 的实际行为；不可用则 F3/F5/F6 改纯点击切视图并回写 §1.3。
 - checkbox 双事件（click + input("true")）在执行侧的实际表现与是否造成 F3 假失败；处置写入实验报告，不改 spec 规则。
+- `(occurrence N)` 同名按钮步骤（F2，recorder ordinal + distiller 模板追加）的执行侧行为——pilot 的 F2×M0 专项首验；若不可用，处置写实验报告（如 F2 改用可区分的商品名按钮），不改本 spec 规则。
+- M3 下页面自身 JS 行为完好：在浏览器中实际操作验证 F1 搜索行为生效（对应 §2.1 内联 JS 同源规则与单测 A12）。
 - 单 run 实测时长分布 → sweep 墙钟与 timeout_s（默认 900）是否调整。
 - deepseek 下 JUnit cost 属性是否正常回传；缺失则 cost 维度降级为 tokens-only 并如实说明。
