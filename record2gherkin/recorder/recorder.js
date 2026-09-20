@@ -284,7 +284,21 @@
       if (!recording) {
         return;
       }
-      event.dom_snapshot.assert_texts = collectNewTexts();
+      const added = collectNewTexts();
+      if (added.length === 0) {
+        return;
+      }
+      // 归因规则：新增文本归给「触发时刻最新已入队事件」。
+      // 调度事件与触发时刻之间可能入队了后续事件（典型：input 在下一次交互的
+      // focusout 时定稿入队，先于引发 DOM 变化的 click），文本实际由那些后续
+      // 事件造成；归给更早的事件会让 Then 断言出现在状态变化之前，重放假失败。
+      const target = events.length > 0 ? events[events.length - 1] : event;
+      for (let index = 0; index < added.length; index += 1) {
+        if (target.dom_snapshot.assert_texts.length >= ASSERT_TEXT_MAX_COUNT) {
+          break;
+        }
+        target.dom_snapshot.assert_texts.push(added[index]);
+      }
     }, SNAPSHOT_DELAY_MS);
     snapshotTimers.push(timer);
   }
