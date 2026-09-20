@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Demo 下单页</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  #result, #announcements { display: none; }
+</style>
+</head>
+<body>
+<h1>Demo 下单页</h1>
+
+<form id="order-form" onsubmit="return false;">
+  <p>
+    <label for="email">邮箱地址</label>
+    <input type="text" id="email" name="email" data-testid="email-input">
+  </p>
+  <p>
+    <input type="text" id="search" name="q" placeholder="搜索商品">
+  </p>
+  <p>
+    <input type="text" id="coupon" name="coupon" aria-label="优惠券码" placeholder="输入优惠码">
+  </p>
+  <p>
+    <label for="password">密码</label>
+    <input type="password" id="password" name="password">
+  </p>
+  <p>
+    <label for="shipping">配送方式</label>
+    <select id="shipping" name="shipping">
+      <option value="standard">标准配送</option>
+      <option value="express">次日达</option>
+      <option value="pickup">门店自提</option>
+    </select>
+  </p>
+  <button type="submit" id="submit-btn" data-testid="submit-order" aria-label="提交订单">下单</button>
+</form>
+
+<p>
+  <label id="newsletter-label"><input type="checkbox" id="newsletter" name="newsletter" data-testid="newsletter-checkbox"><span class="icon" id="newsletter-icon" data-testid="newsletter-icon">★</span> 订阅邮件</label>
+</p>
+
+<p>
+  <button type="button" id="refresh-btn" aria-label="刷新列表">刷新</button>
+  <button type="button" class="delete-btn" data-testid="delete-first">删除</button>
+  <button type="button" class="delete-btn" data-testid="delete-second">删除</button>
+  <button type="button" id="show-result">显示结果</button>
+  <button type="button" id="load-news">加载公告</button>
+</p>
+
+<p><a href="#" id="spa-link">切换视图</a></p>
+
+<p><span id="hover-target">悬浮我</span></p>
+
+<div id="result"><p id="result-text">订单已提交成功</p></div>
+
+<div id="announcements"></div>
+
+<script>
+  document.getElementById("spa-link").addEventListener("click", function (event) {
+    event.preventDefault();
+    history.pushState({}, "", "#view2");
+  });
+
+  document.getElementById("show-result").addEventListener("click", function () {
+    document.getElementById("result").style.display = "block";
+  });
+
+  document.getElementById("load-news").addEventListener("click", function () {
+    var box = document.getElementById("announcements");
+    box.style.display = "block";
+    for (var index = 1; index <= 10; index += 1) {
+      var item = document.createElement("p");
+      item.textContent = "公告条目 " + index + "：" + "这是一条用于验证快照截断规则的超长公告文本,".repeat(10);
+      box.appendChild(item);
+    }
+  });
+</script>
+</body>
+</html>
