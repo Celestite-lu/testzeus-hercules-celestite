@@ -115,6 +115,58 @@ def test_submit_skeleton() -> None:
     assert single_step(skeleton_of(events)) == 'When I submit the "提交订单" form'
 
 
+def test_click_then_submit_dedupes_submit_step() -> None:
+    """P0-1 (spec §2.2 dedup rule): a submit right after a click is the click's twin - only the click step stays.
+
+    The recorder emits click + submit for one submit-button press (recorder spec §4.5); the click step
+    carries the button's name hint, so it is the one that survives.
+    """
+    events = make_flow(
+        [
+            make_event(1, "click", target={"tag": "button", "role": "button", "name": "提交订单"}),
+            make_event(2, "submit", target={"tag": "form", "role": "generic", "name": ""}),
+        ]
+    )
+
+    lines = step_lines(skeleton_of(events))
+
+    assert lines == ['When I click on the "提交订单" button']
+    assert all("submit" not in line for line in lines)
+
+
+def test_deduped_submit_keeps_its_assertions_after_click() -> None:
+    """P0-1 (spec §2.2 dedup rule): dropping the submit step must not drop its snapshot assertions."""
+    events = make_flow(
+        [
+            make_event(1, "navigate", url="https://shop.example.com/checkout", page_title="Checkout"),
+            make_event(2, "click", target={"tag": "button", "role": "button", "name": "提交订单"}, assert_texts=["订单已提交"]),
+            make_event(3, "submit", target={"tag": "form", "role": "generic", "name": ""}, assert_texts=["Order placed successfully"]),
+        ]
+    )
+
+    assert step_lines(skeleton_of(events)) == [
+        'Given I am on the page "https://shop.example.com/checkout"',
+        'When I click on the "提交订单" button',
+        'Then I should see "订单已提交"',
+        'Then I should see "Order placed successfully"',
+    ]
+
+
+def test_standalone_submit_keeps_its_step() -> None:
+    """P0-1 (spec §2.2 dedup rule): a submit without a click predecessor (e.g. Enter-key submit) still renders."""
+    events = make_flow(
+        [
+            make_event(1, "input", target={"tag": "input", "role": "textbox", "form_label": "Search"}, value="wireless headphones"),
+            make_event(2, "submit", target={"tag": "form", "role": "generic", "name": "Search"}),
+        ]
+    )
+
+    assert step_lines(skeleton_of(events)) == [
+        'When I enter "wireless headphones" in the "Search" field',
+        'When I submit the "Search" form',
+    ]
+
+
 def test_assert_texts_become_then_steps() -> None:
     """Case 13: every snapshot text becomes one Then step, in order, right after its event."""
     events = make_flow(
