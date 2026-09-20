@@ -13,9 +13,9 @@
 | 4 | 真实实验 | ✅ | pilot003 3/3（复盘三修复 `fix/pilot-infra`）；**exp001：主指标 1.00 vs 基线 0.667，M3 变异 6/6 vs 0/6**，30 次执行 411 万 token；报告 `dev_docs/evaluation/experiment-report.md` |
 | 5 | 归因器 | ✅ | feat/attributor `742a442`；81 例；真实失败样本（F5/M4）验证诚实降级 |
 | 6 | CLI | ✅ | feat/cli `d3aefbb`；54 例；四命令离线演示 + **真实 LLM 全链路验收通过**（F1 真实执行 passed，62s/7.3 万 token） |
-| 7 | 终审分析 | 🔄 | GLM 终审代理运行中 → `dev_docs/reports/final-analysis.md` |
+| 7 | 终审分析 | ✅ | `dev_docs/reports/final-analysis.md`：**COMPLETE-WITH-NOTES**（数字独立复核属实；演示规避话术与简历口径校准见报告 §4） |
 
-**全局测试基线：292 passed**（recorder 21 + distiller 67 + evaluation 68 + attributor 81 + cli 54）。
+**全局测试基线：292 passed**（recorder 21 + distiller 68 + evaluation 68 + attributor 81 + cli 54）。
 
 ## 决策日志（全量）
 

@@ -25,7 +25,7 @@ uv run python -m record2gherkin analyze run1/opt [--llm]
 | 模块 | 职责 | 测试 |
 |---|---|---|
 | `recorder/` | 注入式 JS 事件录制器（bookmarklet，零依赖单文件） | 21 例 |
-| `distiller/` | 确定性三层蒸馏：规则模板（零模型）→ 可选 LLM 润色 → 事实回查 | 67 例 |
+| `distiller/` | 确定性三层蒸馏：规则模板（零模型）→ 可选 LLM 润色 → 事实回查 | 68 例 |
 | `evaluation/` | demo 应用 / 变异引擎 / 子进程执行器 / 指标 | 68 例 |
 | `attributor/` | 13 条错误签名 + 五档分类 + 证据定位符回查 | 81 例 |
 | `cli.py` | 四命令编排 | 54 例 |
@@ -40,6 +40,11 @@ uv run python -m record2gherkin analyze run1/opt [--llm]
 | selector 式基线 | 0/6 | 0.667 |
 
 文案改写变异 5/6——语义自愈的概率性边界已如实量化。
+
+## 演示与测试注意
+
+- 跑测试只用一条命令：`uv run pytest tests/record2gherkin -q`（本机 292 passed；recorder/cli 分开按序子集运行会因 session 级 playwright 冲突而误红；新克隆环境为 280 passed + 12 skipped——`test_pipeline_d1` 依赖 gitignored 的录制产物，属预期）
+- **现场演示不要录制多页（MPA）站点**：注入 JS 随文档导航销毁，record 会干净退出（exit 2）不落脏数据。用本地 MiniShop demo（`record2gherkin/evaluation/demo_server.py`）或 file:// fixture；多页支持是 v1 明确的 scope out
 
 ## 安全
 
