@@ -1,0 +1,82 @@
+{
+  "session": {
+    "started_at": "2026-09-20T14:00:00.000Z",
+    "origin": ""
+  },
+  "events": [
+    {
+      "seq": 1,
+      "ts": 1695008000000,
+      "type": "click",
+      "url": "https://sparse.example.com/",
+      "page_title": "",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 2,
+      "ts": 1695008001200,
+      "type": "input",
+      "url": "https://sparse.example.com/",
+      "page_title": "   ",
+      "target": {
+        "tag": "input",
+        "role": "",
+        "name": "   ",
+        "testid": null,
+        "id": "q",
+        "ordinal": null,
+        "form_label": null
+      },
+      "value": "  padded value  ",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 3,
+      "ts": 1695008002400,
+      "type": "hover",
+      "url": "https://sparse.example.com/",
+      "page_title": "",
+      "target": {
+        "tag": "div",
+        "role": "generic",
+        "name": "Tooltip",
+        "testid": null,
+        "id": null,
+        "ordinal": null,
+        "form_label": null
+      },
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 4,
+      "ts": 1695008003600,
+      "type": "navigate",
+      "url": "",
+      "page_title": "",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 5,
+      "ts": 1695008004800,
+      "type": "select",
+      "url": "https://sparse.example.com/",
+      "page_title": "",
+      "target": {
+        "tag": "select",
+        "role": "combobox",
+        "name": null,
+        "testid": null,
+        "id": null,
+        "ordinal": null,
+        "form_label": null
+      },
+      "value": "Blue",
+      "dom_snapshot": { "assert_texts": ["Saved"] }
+    }
+  ]
+}

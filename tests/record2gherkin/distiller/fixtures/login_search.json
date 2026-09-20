@@ -1,0 +1,136 @@
+{
+  "session": {
+    "started_at": "2026-09-20T12:00:00.000Z",
+    "origin": "https://staging.example.com"
+  },
+  "events": [
+    {
+      "seq": 1,
+      "ts": 1695000000000,
+      "type": "navigate",
+      "url": "https://staging.example.com/login",
+      "page_title": "Staging Store",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 2,
+      "ts": 1695000001200,
+      "type": "input",
+      "url": "https://staging.example.com/login",
+      "page_title": "Staging Store",
+      "target": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "Email",
+        "testid": "email-input",
+        "id": "email",
+        "ordinal": null,
+        "form_label": "Email"
+      },
+      "value": "qa.user@example.com",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 3,
+      "ts": 1695000002600,
+      "type": "input",
+      "url": "https://staging.example.com/login",
+      "page_title": "Staging Store",
+      "target": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "Password",
+        "testid": "password-input",
+        "id": "password",
+        "ordinal": null,
+        "form_label": "Password"
+      },
+      "value": "<masked>",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 4,
+      "ts": 1695000003900,
+      "type": "click",
+      "url": "https://staging.example.com/login",
+      "page_title": "Staging Store",
+      "target": {
+        "tag": "button",
+        "role": "button",
+        "name": "Sign in",
+        "testid": "sign-in-button",
+        "id": "sign-in",
+        "ordinal": null,
+        "form_label": null
+      },
+      "value": null,
+      "dom_snapshot": { "assert_texts": ["Welcome back, QA User", "Sign out"] }
+    },
+    {
+      "seq": 5,
+      "ts": 1695000005200,
+      "type": "navigate",
+      "url": "https://staging.example.com/search",
+      "page_title": "Search",
+      "target": null,
+      "value": null,
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 6,
+      "ts": 1695000006800,
+      "type": "input",
+      "url": "https://staging.example.com/search",
+      "page_title": "Search",
+      "target": {
+        "tag": "input",
+        "role": "textbox",
+        "name": "Search products",
+        "testid": "search-input",
+        "id": "search",
+        "ordinal": null,
+        "form_label": "Search"
+      },
+      "value": "wireless headphones",
+      "dom_snapshot": { "assert_texts": [] }
+    },
+    {
+      "seq": 7,
+      "ts": 1695000007400,
+      "type": "select",
+      "url": "https://staging.example.com/search",
+      "page_title": "Search",
+      "target": {
+        "tag": "select",
+        "role": "combobox",
+        "name": "Sort by",
+        "testid": "sort-select",
+        "id": "sort",
+        "ordinal": null,
+        "form_label": "Sort by"
+      },
+      "value": "Price: Low to High",
+      "dom_snapshot": { "assert_texts": ["Showing 12 results for \"wireless headphones\""] }
+    },
+    {
+      "seq": 8,
+      "ts": 1695000009100,
+      "type": "click",
+      "url": "https://staging.example.com/search",
+      "page_title": "Search",
+      "target": {
+        "tag": "button",
+        "role": "button",
+        "name": "Add to cart",
+        "testid": "add-to-cart",
+        "id": null,
+        "ordinal": 1,
+        "form_label": null
+      },
+      "value": null,
+      "dom_snapshot": { "assert_texts": ["Added to cart"] }
+    }
+  ]
+}
