@@ -58,6 +58,7 @@ tests/record2gherkin/
 - `Feature: Recorded flow on <origin>`；`origin` 缺失 → `Feature: Recorded flow`。
 - `Scenario: <第一个事件的 page_title>`；缺失 → `Scenario: Recorded scenario`。
 - 标题做单行化（空白归一化）与长度截断（120 字符）。标题行不受事实回查约束（见 §5）。
+- **文件名安全清洗（2026-09-21 pilot002 复盘，阶段 1 分析 P1-4）**：标题会被上游用作 JUnit 文件名（`Recorded flow on http://...` 中的 `://` 产生的 `//` 被当作目录分隔符导致写文件失败），故标题仅保留 `[字母数字下划线、CJK、空格、连字符]`，其余连续段折叠为单个 `_`，首尾 `_`/空格剥除，清洗后为空回退默认标题。
 
 ### 2.2 规则映射表（每种事件 → Gherkin 骨架）
 

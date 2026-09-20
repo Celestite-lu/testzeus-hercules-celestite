@@ -38,7 +38,7 @@ REDACTED = "***REDACTED***"
 MASK_FRAGMENT_LEN = 8
 
 #: §4.3 fixed LLM plumbing; D2 pilot confirms the model string / base URL combination.
-LLM_MODEL_NAME = "openai/deepseek-chat"
+LLM_MODEL_NAME = "deepseek-v4-pro"
 LLM_MODEL_BASE_URL = "https://api.deepseek.com"
 LLM_MODEL_API_TYPE = "openai"
 
@@ -153,6 +153,9 @@ def build_child_env(api_key: str) -> dict[str, str]:
             "LLM_MODEL_API_KEY": api_key.strip(),
             "ENABLE_TELEMETRY": "0",  # config import initialises Sentry otherwise (telemetry.py:20,65)
             "HEADLESS": "true",
+            # 本机直连 GitHub releases 不稳，uBlock 扩展下载超时会让浏览器初始化直接失败
+            # （playwright_manager.py:349,369 httpx.ConnectTimeout）；demo 站无广告，禁用无副作用。
+            "ENABLE_UBLOCK_EXTENSION": "false",
         }
     )
     return env

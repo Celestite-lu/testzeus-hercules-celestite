@@ -6,6 +6,7 @@ acceptance criterion 4). Output is always exactly 1 Feature / 1 Scenario.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from record2gherkin.distiller.events import (
@@ -48,8 +49,14 @@ def _first_present(*candidates: str | None) -> str | None:
     return None
 
 
+_FILENAME_UNSAFE_CHARS = re.compile(r"[^\w\- ]+")  # \w 含字母数字下划线与 CJK；标题会被上游用作文件名，其余字符折叠为 "_"
+
+
 def _title(text: str) -> str:
-    return normalize_whitespace(text)[:TITLE_MAX_LENGTH]
+    normalized = normalize_whitespace(text)[:TITLE_MAX_LENGTH]
+    sanitized = _FILENAME_UNSAFE_CHARS.sub("_", normalized)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_ ")
+    return sanitized or FEATURE_TITLE_DEFAULT
 
 
 def _placeholder(key: str) -> str:

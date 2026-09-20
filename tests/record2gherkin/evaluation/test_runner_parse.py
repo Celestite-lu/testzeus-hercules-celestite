@@ -204,12 +204,13 @@ def test_e26_command_uses_absolute_paths_and_never_carries_the_key(sample_featur
 def test_e27_child_env_carries_the_spec_configuration(sample_feature: Path, tmp_run_root: Path) -> None:
     """E27 child env 含 §4.3 全部键；ENABLE_TELEMETRY=0；key 仅存在于 env 值。"""
     env = build_child_env(FAKE_API_KEY)
-    assert env["LLM_MODEL_NAME"] == "openai/deepseek-chat"
+    assert env["LLM_MODEL_NAME"] == "deepseek-v4-pro"  # pilot002 复盘：openai/ 前缀被 DeepSeek API 400 拒绝
     assert env["LLM_MODEL_BASE_URL"] == "https://api.deepseek.com"
     assert env["LLM_MODEL_API_TYPE"] == "openai"
     assert env["LLM_MODEL_API_KEY"] == FAKE_API_KEY
     assert env["ENABLE_TELEMETRY"] == "0"
     assert env["HEADLESS"] == "true"
+    assert env["ENABLE_UBLOCK_EXTENSION"] == "false"  # pilot001 复盘：GitHub 直连超时会让浏览器初始化失败
     assert FAKE_API_KEY not in " ".join(env.keys())
     with pytest.raises(runner.RunnerError):
         build_child_env("   ")
