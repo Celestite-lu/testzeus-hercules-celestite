@@ -1,28 +1,28 @@
 # STATUS — 总进度看板
 
-> 仅总编排代理维护。更新时间：2026-09-21（阶段 1-2 完成）
+> 仅总编排代理维护。更新时间：2026-09-21 03:10（pilot 通过，全量 sweep 运行中）
 
 ## 阶段状态
 
-| # | 阶段 | 状态 | 分支 | 备注 |
+| # | 阶段 | 状态 | 分支/提交 | 备注 |
 |---|---|---|---|---|
-| 0 | 环境准备（文档规范/密钥脱敏/git 基线） | ✅ 完成 | main `8716f7f` | chromium 1148 已装；LLM-Key.txt/PLAN.md 已 gitignore |
-| 1a | 录制器 plan+spec | ✅ 完成 | main `52070fa` | GLM 规划 |
-| 1b | 蒸馏器 plan+spec | ✅ 完成 | main `52070fa` | 与 1a 并发 |
-| 1c | spec 独立审查 | ✅ 完成 | main `52070fa` | 双 REVISE→必改项已修订，grep 核验，契约零漂移 |
-| 2a | 录制器实现+测试 | ✅ 完成 | feat/recorder → main `a00ef10` | 20 例全绿（后 +1 回归 = 21） |
-| 2b | 蒸馏器实现+测试 | ✅ 完成 | feat/distiller → main `6d43ada` | 64 例全绿 |
-| 2c | 集成冒烟 + 归因缺陷修复 | ✅ 完成 | fix/recorder-snapshot-attribution → main `4f0df82` | 冒烟发现 Then 早于状态变化的归因缺陷，已修复+回归；门禁 85 passed |
-| 3 | 合并后分析 | 🔄 进行中 | | GLM 分析代理 |
-| 4 | 评测框架与 UI 变异实验 | 🔄 进行中（plan+spec 中） | feat/evaluation | 实验 LLM=deepseek-chat |
-| 5 | 失败归因器 | ⬜ 未开始 | feat/attributor | |
-| 6 | 子进程编排 CLI | ⬜ 未开始 | feat/cli | |
-| 7 | 全链路验收 + 文档收尾 | ⬜ 未开始 | | |
+| 0 | 环境准备 | ✅ | main `8716f7f` | chromium 1148；密钥/PLAN 已 gitignore |
+| 1 | 录制器+蒸馏器 全生命周期 | ✅ | feat/recorder、feat/distiller、fix/* | 全局 88→157 passed；集成冒烟 9/9 |
+| 2 | 阶段 1 合并后分析 + P0-1 修复 | ✅ | fix/distiller-submit-dedup | GO-WITH-CAVEATS |
+| 3 | 评测框架（plan/spec/审查×2轮/实现） | ✅ | feat/evaluation `35dd43f` | 68 例模块测试 |
+| 4 | pilot 真实实验 | ✅ | pilot003 | **3/3 全过**（含 M3 动态 id 变异）；复盘修了 3 个基础设施问题（见决策日志） |
+| 5 | 归因器（plan/spec/审查/实现） | ✅ | feat/attributor `742a442` | 81 例全绿；全局 238 passed |
+| 6 | 全量 sweep（30 格） | 🔄 运行中 | exp001 | 后台 exec_9a6cf2bd，预计 2-3h |
+| 7 | CLI（plan/spec ✅，审查 🔄） | 🔄 | dev_docs/cli | 审查代理运行中 |
+| 8 | 全链路验收 + 文档收尾 | ⬜ | | |
 
 ## 决策日志
 
 - 2026-09-21 D0：确立看板与文档规范；录制器测试走 pytest+playwright（本机无 node）。
-- 2026-09-21 D1：spec 修订采用"原规划代理返工 + 总编排 grep 核验"收敛，不追加整轮复审（修订为一行级、机械可验）。
-- 2026-09-21 D1：测试布局改为 `tests/record2gherkin/<module>/` 子目录 + 目录级 conftest（避免并行模块写同一 conftest）。
-- 2026-09-21 D1：集成冒烟发现快照归因缺陷（spec 级设计缺陷，非实现 bug）→ 修复规则：差集文本归给触发时刻最新已入队事件。bookmarklet.txt 作为产物入库（无 CI 构建链，入库保证开箱可用）。
-- 2026-09-21 D1：集成冒烟脚本沉淀于 `dev_runs/integration_smoke.py`（gitignore），9/9 通过。
+- 2026-09-21 D1：spec 修订采用"原规划代理返工 + 总编排 grep 核验"收敛；测试布局 `tests/record2gherkin/<module>/` 子目录级 conftest；集成冒烟发现快照归因缺陷→修复（归给触发时刻最新事件）。
+- 2026-09-21 D2：合并分析 P0-1（submit 双步骤）→ 蒸馏器确定性去重；P0-2（占位符无消费方）→ 评测绕开密码流程，注入策略落 CLI 模块。
+- 2026-09-21 D2（pilot 复盘三修复，`fix/pilot-infra`）：
+  1. `ENABLE_UBLOCK_EXTENSION=false` 入 child env——GitHub releases 直连超时导致浏览器初始化 ConnectTimeout（pilot001 全军覆没根因）
+  2. 模型 `openai/deepseek-chat` → `deepseek-v4-pro`——2026 年 DeepSeek API 已不支持旧型号名（400 明示支持 deepseek-flash / deepseek-v4-pro）；planner 需强模型先全角色单模型，成本超标再分角色
+  3. 蒸馏器标题文件名安全清洗——origin 里的 `://` 进 JUnit 文件名变目录分隔符（阶段 1 分析 P1-4 应验）
+- 2026-09-21 D2：pilot003 三格全过；token 实测 F3 复杂流约 42 万/次（planner 全量历史重 feed 所致，DeepSeek 前缀缓存会折扣实际成本）；cost 字段 cost_unavailable（DeepSeek 不在 litellm 价格表），以 token 计量汇报。
