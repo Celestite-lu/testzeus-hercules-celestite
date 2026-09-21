@@ -1,6 +1,6 @@
 # STATUS — 总进度看板
 
-> 仅总编排代理维护。更新时间：2026-09-21 04:20（**全项目开发完成，终审分析进行中**）
+> 仅总编排代理维护。更新时间：2026-09-21 05:40（benchmark 循环启动：多轮分析-改进-实验冲击 SOTA）
 
 ## 阶段状态
 
@@ -13,6 +13,7 @@
 | 4 | 真实实验 | ✅ | pilot003 3/3（复盘三修复 `fix/pilot-infra`）；**exp001：主指标 1.00 vs 基线 0.667，M3 变异 6/6 vs 0/6**，30 次执行 411 万 token；报告 `dev_docs/evaluation/experiment-report.md` |
 | 5 | 归因器 | ✅ | feat/attributor `742a442`；81 例；真实失败样本（F5/M4）验证诚实降级 |
 | 6 | CLI | ✅ | feat/cli `d3aefbb`；54 例；四命令离线演示 + **真实 LLM 全链路验收通过**（F1 真实执行 passed，62s/7.3 万 token） |
+| 7.5 | MiniWoB++ benchmark | 🔄 | 模块已合并 `82f73dc`（68 例，全局 360）；pilot 8/10 官方通过（均值 5.7万 tok/任务）；安全审查 YELLOW→P0 加固实施中；公开基线阶梯固化（A 档 47-60%，Agent-E 81.6%） |
 | 7 | 终审分析 | ✅ | `dev_docs/reports/final-analysis.md`：**COMPLETE-WITH-NOTES**（数字独立复核属实；演示规避话术与简历口径校准见报告 §4） |
 
 **全局测试基线：292 passed**（recorder 21 + distiller 68 + evaluation 68 + attributor 81 + cli 54）。
