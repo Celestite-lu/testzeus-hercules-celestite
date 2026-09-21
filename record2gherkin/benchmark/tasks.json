@@ -1,0 +1,1007 @@
+{
+  "generated_at": "2026-09-21T14:48:12+00:00",
+  "source": "browsergym-miniwob 0.14.3, registry ALL_MINIWOB_TASKS (125 tasks)",
+  "episode_max_time_ms_default": 240000,
+  "tasks": [
+    {
+      "task_id": "miniwob.ascending-numbers",
+      "subdomain": "ascending-numbers",
+      "family": "ascending-numbers",
+      "visual": false,
+      "desc": "Click on the numbers in ascending order.",
+      "html": "miniwob_html/miniwob/ascending-numbers.html"
+    },
+    {
+      "task_id": "miniwob.bisect-angle",
+      "subdomain": "bisect-angle",
+      "family": "bisect-angle",
+      "visual": false,
+      "desc": "Find the line that bisects an angle evenly in two.",
+      "html": "miniwob_html/miniwob/bisect-angle.html"
+    },
+    {
+      "task_id": "miniwob.book-flight",
+      "subdomain": "book-flight",
+      "family": "book-flight",
+      "visual": false,
+      "desc": "Search for flight results.",
+      "html": "miniwob_html/miniwob/book-flight.html"
+    },
+    {
+      "task_id": "miniwob.book-flight-nodelay",
+      "subdomain": "book-flight-nodelay",
+      "family": "book-flight-nodelay",
+      "visual": false,
+      "desc": "[book-flight] Removed animation.",
+      "html": "miniwob_html/miniwob/book-flight-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.buy-ticket",
+      "subdomain": "buy-ticket",
+      "family": "buy-ticket",
+      "visual": false,
+      "desc": "Buy a ticket that matches the requested criteria.",
+      "html": "miniwob_html/miniwob/buy-ticket.html"
+    },
+    {
+      "task_id": "miniwob.choose-date",
+      "subdomain": "choose-date",
+      "family": "choose-date",
+      "visual": false,
+      "desc": "Learn to operate a date picker tool.",
+      "html": "miniwob_html/miniwob/choose-date.html"
+    },
+    {
+      "task_id": "miniwob.choose-date-easy",
+      "subdomain": "choose-date-easy",
+      "family": "choose-date-easy",
+      "visual": false,
+      "desc": "[choose-date] December only.",
+      "html": "miniwob_html/miniwob/choose-date-easy.html"
+    },
+    {
+      "task_id": "miniwob.choose-date-medium",
+      "subdomain": "choose-date-medium",
+      "family": "choose-date-medium",
+      "visual": false,
+      "desc": "[choose-date] December or November only.",
+      "html": "miniwob_html/miniwob/choose-date-medium.html"
+    },
+    {
+      "task_id": "miniwob.choose-date-nodelay",
+      "subdomain": "choose-date-nodelay",
+      "family": "choose-date-nodelay",
+      "visual": false,
+      "desc": "[choose-date] Removed animation.",
+      "html": "miniwob_html/miniwob/choose-date-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.choose-list",
+      "subdomain": "choose-list",
+      "family": "choose-list",
+      "visual": false,
+      "desc": "Choose an item from a drop down list.",
+      "html": "miniwob_html/miniwob/choose-list.html"
+    },
+    {
+      "task_id": "miniwob.circle-center",
+      "subdomain": "circle-center",
+      "family": "circle-center",
+      "visual": false,
+      "desc": "Find the center of a circle.",
+      "html": "miniwob_html/miniwob/circle-center.html"
+    },
+    {
+      "task_id": "miniwob.click-button",
+      "subdomain": "click-button",
+      "family": "click-button",
+      "visual": false,
+      "desc": "Click on a specific button in a generated form.",
+      "html": "miniwob_html/miniwob/click-button.html"
+    },
+    {
+      "task_id": "miniwob.click-button-sequence",
+      "subdomain": "click-button-sequence",
+      "family": "click-button-sequence",
+      "visual": false,
+      "desc": "Click on buttons in a certain order.",
+      "html": "miniwob_html/miniwob/click-button-sequence.html"
+    },
+    {
+      "task_id": "miniwob.click-checkboxes",
+      "subdomain": "click-checkboxes",
+      "family": "click-checkboxes",
+      "visual": false,
+      "desc": "Click desired checkboxes.",
+      "html": "miniwob_html/miniwob/click-checkboxes.html"
+    },
+    {
+      "task_id": "miniwob.click-checkboxes-large",
+      "subdomain": "click-checkboxes-large",
+      "family": "click-checkboxes-large",
+      "visual": false,
+      "desc": "[click-checkboxes] Click at least 5 out of up to 12 checkboxes.",
+      "html": "miniwob_html/miniwob/click-checkboxes-large.html"
+    },
+    {
+      "task_id": "miniwob.click-checkboxes-soft",
+      "subdomain": "click-checkboxes-soft",
+      "family": "click-checkboxes-soft",
+      "visual": false,
+      "desc": "[click-checkboxes] Paraphrased entries.",
+      "html": "miniwob_html/miniwob/click-checkboxes-soft.html"
+    },
+    {
+      "task_id": "miniwob.click-checkboxes-transfer",
+      "subdomain": "click-checkboxes-transfer",
+      "family": "click-checkboxes-transfer",
+      "visual": false,
+      "desc": "[click-checkboxes] Train and test on different number of targets.",
+      "html": "miniwob_html/miniwob/click-checkboxes-transfer.html"
+    },
+    {
+      "task_id": "miniwob.click-collapsible",
+      "subdomain": "click-collapsible",
+      "family": "click-collapsible",
+      "visual": false,
+      "desc": "Click a collapsible element to expand it.",
+      "html": "miniwob_html/miniwob/click-collapsible.html"
+    },
+    {
+      "task_id": "miniwob.click-collapsible-2",
+      "subdomain": "click-collapsible-2",
+      "family": "click-collapsible",
+      "visual": false,
+      "desc": "Find and click on a specified link, from collapsible elements.",
+      "html": "miniwob_html/miniwob/click-collapsible-2.html"
+    },
+    {
+      "task_id": "miniwob.click-collapsible-2-nodelay",
+      "subdomain": "click-collapsible-2-nodelay",
+      "family": "click-collapsible-2-nodelay",
+      "visual": false,
+      "desc": "[click-collapsible-2] Removed animation.",
+      "html": "miniwob_html/miniwob/click-collapsible-2-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.click-collapsible-nodelay",
+      "subdomain": "click-collapsible-nodelay",
+      "family": "click-collapsible-nodelay",
+      "visual": false,
+      "desc": "[click-collapsible] Removed animation.",
+      "html": "miniwob_html/miniwob/click-collapsible-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.click-color",
+      "subdomain": "click-color",
+      "family": "click-color",
+      "visual": false,
+      "desc": "Click the specified color.",
+      "html": "miniwob_html/miniwob/click-color.html"
+    },
+    {
+      "task_id": "miniwob.click-dialog",
+      "subdomain": "click-dialog",
+      "family": "click-dialog",
+      "visual": false,
+      "desc": "Click the button to close the dialog box.",
+      "html": "miniwob_html/miniwob/click-dialog.html"
+    },
+    {
+      "task_id": "miniwob.click-dialog-2",
+      "subdomain": "click-dialog-2",
+      "family": "click-dialog",
+      "visual": false,
+      "desc": "Click a specific button in a dialog box.",
+      "html": "miniwob_html/miniwob/click-dialog-2.html"
+    },
+    {
+      "task_id": "miniwob.click-link",
+      "subdomain": "click-link",
+      "family": "click-link",
+      "visual": false,
+      "desc": "Click on a specified link in text.",
+      "html": "miniwob_html/miniwob/click-link.html"
+    },
+    {
+      "task_id": "miniwob.click-menu",
+      "subdomain": "click-menu",
+      "family": "click-menu",
+      "visual": false,
+      "desc": "Click menu items.",
+      "html": "miniwob_html/miniwob/click-menu.html"
+    },
+    {
+      "task_id": "miniwob.click-menu-2",
+      "subdomain": "click-menu-2",
+      "family": "click-menu",
+      "visual": false,
+      "desc": "Find a specific item from a menu.",
+      "html": "miniwob_html/miniwob/click-menu-2.html"
+    },
+    {
+      "task_id": "miniwob.click-option",
+      "subdomain": "click-option",
+      "family": "click-option",
+      "visual": false,
+      "desc": "Click option boxes.",
+      "html": "miniwob_html/miniwob/click-option.html"
+    },
+    {
+      "task_id": "miniwob.click-pie",
+      "subdomain": "click-pie",
+      "family": "click-pie",
+      "visual": false,
+      "desc": "Click items on a pie menu.",
+      "html": "miniwob_html/miniwob/click-pie.html"
+    },
+    {
+      "task_id": "miniwob.click-pie-nodelay",
+      "subdomain": "click-pie-nodelay",
+      "family": "click-pie-nodelay",
+      "visual": false,
+      "desc": "[click-pie] Removed animation.",
+      "html": "miniwob_html/miniwob/click-pie-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.click-scroll-list",
+      "subdomain": "click-scroll-list",
+      "family": "click-scroll-list",
+      "visual": false,
+      "desc": "Click multiple items from a scroll list.",
+      "html": "miniwob_html/miniwob/click-scroll-list.html"
+    },
+    {
+      "task_id": "miniwob.click-shades",
+      "subdomain": "click-shades",
+      "family": "click-shades",
+      "visual": false,
+      "desc": "Click the shades that match a specified color.",
+      "html": "miniwob_html/miniwob/click-shades.html"
+    },
+    {
+      "task_id": "miniwob.click-shape",
+      "subdomain": "click-shape",
+      "family": "click-shape",
+      "visual": false,
+      "desc": "Click on a specific shape.",
+      "html": "miniwob_html/miniwob/click-shape.html"
+    },
+    {
+      "task_id": "miniwob.click-tab",
+      "subdomain": "click-tab",
+      "family": "click-tab",
+      "visual": false,
+      "desc": "Click on a tab element.",
+      "html": "miniwob_html/miniwob/click-tab.html"
+    },
+    {
+      "task_id": "miniwob.click-tab-2",
+      "subdomain": "click-tab-2",
+      "family": "click-tab",
+      "visual": false,
+      "desc": "Click a link inside a specific tab element.",
+      "html": "miniwob_html/miniwob/click-tab-2.html"
+    },
+    {
+      "task_id": "miniwob.click-tab-2-easy",
+      "subdomain": "click-tab-2-easy",
+      "family": "click-tab-2-easy",
+      "visual": false,
+      "desc": "[click-tab-2] One 1 tab.",
+      "html": "miniwob_html/miniwob/click-tab-2-easy.html"
+    },
+    {
+      "task_id": "miniwob.click-tab-2-hard",
+      "subdomain": "click-tab-2-hard",
+      "family": "click-tab-2-hard",
+      "visual": false,
+      "desc": "[click-tab-2] Varying number of tabs from 2 to 6.",
+      "html": "miniwob_html/miniwob/click-tab-2-hard.html"
+    },
+    {
+      "task_id": "miniwob.click-tab-2-medium",
+      "subdomain": "click-tab-2-medium",
+      "family": "click-tab-2-medium",
+      "visual": false,
+      "desc": "[click-tab-2] Choose between a link or ‘no match’.",
+      "html": "miniwob_html/miniwob/click-tab-2-medium.html"
+    },
+    {
+      "task_id": "miniwob.click-test",
+      "subdomain": "click-test",
+      "family": "click-test",
+      "visual": false,
+      "desc": "Click on a single button.",
+      "html": "miniwob_html/miniwob/click-test.html"
+    },
+    {
+      "task_id": "miniwob.click-test-2",
+      "subdomain": "click-test-2",
+      "family": "click-test",
+      "visual": false,
+      "desc": "Click on one of two buttons.",
+      "html": "miniwob_html/miniwob/click-test-2.html"
+    },
+    {
+      "task_id": "miniwob.click-test-transfer",
+      "subdomain": "click-test-transfer",
+      "family": "click-test-transfer",
+      "visual": false,
+      "desc": "[click-test] Different buttons during train and test.",
+      "html": "miniwob_html/miniwob/click-test-transfer.html"
+    },
+    {
+      "task_id": "miniwob.click-widget",
+      "subdomain": "click-widget",
+      "family": "click-widget",
+      "visual": false,
+      "desc": "Click on a specific widget in a generated form.",
+      "html": "miniwob_html/miniwob/click-widget.html"
+    },
+    {
+      "task_id": "miniwob.copy-paste",
+      "subdomain": "copy-paste",
+      "family": "copy-paste",
+      "visual": false,
+      "desc": "Copy text and paste it into an input.",
+      "html": "miniwob_html/miniwob/copy-paste.html"
+    },
+    {
+      "task_id": "miniwob.copy-paste-2",
+      "subdomain": "copy-paste-2",
+      "family": "copy-paste",
+      "visual": false,
+      "desc": "Copy text from a specific textarea and paste it into an input.",
+      "html": "miniwob_html/miniwob/copy-paste-2.html"
+    },
+    {
+      "task_id": "miniwob.count-shape",
+      "subdomain": "count-shape",
+      "family": "count-shape",
+      "visual": false,
+      "desc": "Count number of shapes.",
+      "html": "miniwob_html/miniwob/count-shape.html"
+    },
+    {
+      "task_id": "miniwob.count-sides",
+      "subdomain": "count-sides",
+      "family": "count-sides",
+      "visual": false,
+      "desc": "Count the number of sides on a shape.",
+      "html": "miniwob_html/miniwob/count-sides.html"
+    },
+    {
+      "task_id": "miniwob.daily-calendar",
+      "subdomain": "daily-calendar",
+      "family": "daily-calendar",
+      "visual": false,
+      "desc": "Create an event on a daily calendar.",
+      "html": "miniwob_html/miniwob/daily-calendar.html"
+    },
+    {
+      "task_id": "miniwob.drag-box",
+      "subdomain": "drag-box",
+      "family": "drag-box",
+      "visual": false,
+      "desc": "Drag the smaller box into the larger box.",
+      "html": "miniwob_html/miniwob/drag-box.html"
+    },
+    {
+      "task_id": "miniwob.drag-circle",
+      "subdomain": "drag-circle",
+      "family": "drag-circle",
+      "visual": false,
+      "desc": "Drag an item in a specified direction.",
+      "html": "miniwob_html/miniwob/drag-circle.html"
+    },
+    {
+      "task_id": "miniwob.drag-cube",
+      "subdomain": "drag-cube",
+      "family": "drag-cube",
+      "visual": false,
+      "desc": "Drag a 3D cube to show a specific face.",
+      "html": "miniwob_html/miniwob/drag-cube.html"
+    },
+    {
+      "task_id": "miniwob.drag-items",
+      "subdomain": "drag-items",
+      "family": "drag-items",
+      "visual": false,
+      "desc": "Drag items in a list, in a specified direction",
+      "html": "miniwob_html/miniwob/drag-items.html"
+    },
+    {
+      "task_id": "miniwob.drag-items-grid",
+      "subdomain": "drag-items-grid",
+      "family": "drag-items-grid",
+      "visual": false,
+      "desc": "Drag items in a 2D grid around.",
+      "html": "miniwob_html/miniwob/drag-items-grid.html"
+    },
+    {
+      "task_id": "miniwob.drag-shapes",
+      "subdomain": "drag-shapes",
+      "family": "drag-shapes",
+      "visual": false,
+      "desc": "Drag shapes into a box.",
+      "html": "miniwob_html/miniwob/drag-shapes.html"
+    },
+    {
+      "task_id": "miniwob.drag-shapes-2",
+      "subdomain": "drag-shapes-2",
+      "family": "drag-shapes",
+      "visual": false,
+      "desc": "Drag shapes into boxes, categorized by type.",
+      "html": "miniwob_html/miniwob/drag-shapes-2.html"
+    },
+    {
+      "task_id": "miniwob.drag-single-shape",
+      "subdomain": "drag-single-shape",
+      "family": "drag-single-shape",
+      "visual": false,
+      "desc": "Drag a randomly generated shape in a specified direction.",
+      "html": "miniwob_html/miniwob/drag-single-shape.html"
+    },
+    {
+      "task_id": "miniwob.drag-sort-numbers",
+      "subdomain": "drag-sort-numbers",
+      "family": "drag-sort-numbers",
+      "visual": false,
+      "desc": "Drag numbers into sorted ascending order.",
+      "html": "miniwob_html/miniwob/drag-sort-numbers.html"
+    },
+    {
+      "task_id": "miniwob.draw-circle",
+      "subdomain": "draw-circle",
+      "family": "draw-circle",
+      "visual": false,
+      "desc": "Draw a circle around a marked point.",
+      "html": "miniwob_html/miniwob/draw-circle.html"
+    },
+    {
+      "task_id": "miniwob.draw-line",
+      "subdomain": "draw-line",
+      "family": "draw-line",
+      "visual": false,
+      "desc": "Draw a line through a marked point.",
+      "html": "miniwob_html/miniwob/draw-line.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox",
+      "subdomain": "email-inbox",
+      "family": "email-inbox",
+      "visual": false,
+      "desc": "Navigate through an email inbox and perform some actions.",
+      "html": "miniwob_html/miniwob/email-inbox.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-delete",
+      "subdomain": "email-inbox-delete",
+      "family": "email-inbox-delete",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling + 1 subtask.",
+      "html": "miniwob_html/miniwob/email-inbox-delete.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-forward",
+      "subdomain": "email-inbox-forward",
+      "family": "email-inbox-forward",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling + 1 subtask.",
+      "html": "miniwob_html/miniwob/email-inbox-forward.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-forward-nl",
+      "subdomain": "email-inbox-forward-nl",
+      "family": "email-inbox-forward-nl",
+      "visual": false,
+      "desc": "[email-inbox-forward] varied instruction texts (30 templates).",
+      "html": "miniwob_html/miniwob/email-inbox-forward-nl.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-forward-nl-turk",
+      "subdomain": "email-inbox-forward-nl-turk",
+      "family": "email-inbox-forward-nl-turk",
+      "visual": false,
+      "desc": "[email-inbox-forward] varied instruction texts (100 templates).",
+      "html": "miniwob_html/miniwob/email-inbox-forward-nl-turk.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-important",
+      "subdomain": "email-inbox-important",
+      "family": "email-inbox-important",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling + 1 subtask.",
+      "html": "miniwob_html/miniwob/email-inbox-important.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-nl-turk",
+      "subdomain": "email-inbox-nl-turk",
+      "family": "email-inbox-nl-turk",
+      "visual": false,
+      "desc": "[email-inbox] varied instruction texts (100 templates for each subtask).",
+      "html": "miniwob_html/miniwob/email-inbox-nl-turk.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-noscroll",
+      "subdomain": "email-inbox-noscroll",
+      "family": "email-inbox-noscroll",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling.",
+      "html": "miniwob_html/miniwob/email-inbox-noscroll.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-reply",
+      "subdomain": "email-inbox-reply",
+      "family": "email-inbox-reply",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling + 1 subtask.",
+      "html": "miniwob_html/miniwob/email-inbox-reply.html"
+    },
+    {
+      "task_id": "miniwob.email-inbox-star-reply",
+      "subdomain": "email-inbox-star-reply",
+      "family": "email-inbox-star-reply",
+      "visual": false,
+      "desc": "[email-inbox] No scrolling + 2 subtasks.",
+      "html": "miniwob_html/miniwob/email-inbox-star-reply.html"
+    },
+    {
+      "task_id": "miniwob.enter-date",
+      "subdomain": "enter-date",
+      "family": "enter-date",
+      "visual": false,
+      "desc": "Use the date input to pick the correct date.",
+      "html": "miniwob_html/miniwob/enter-date.html"
+    },
+    {
+      "task_id": "miniwob.enter-password",
+      "subdomain": "enter-password",
+      "family": "enter-password",
+      "visual": false,
+      "desc": "Enter the password into the form.",
+      "html": "miniwob_html/miniwob/enter-password.html"
+    },
+    {
+      "task_id": "miniwob.enter-text",
+      "subdomain": "enter-text",
+      "family": "enter-text",
+      "visual": false,
+      "desc": "Enter given text to a textfield.",
+      "html": "miniwob_html/miniwob/enter-text.html"
+    },
+    {
+      "task_id": "miniwob.enter-text-2",
+      "subdomain": "enter-text-2",
+      "family": "enter-text",
+      "visual": false,
+      "desc": "Convert given text to upper or lower case.",
+      "html": "miniwob_html/miniwob/enter-text-2.html"
+    },
+    {
+      "task_id": "miniwob.enter-text-dynamic",
+      "subdomain": "enter-text-dynamic",
+      "family": "enter-text-dynamic",
+      "visual": false,
+      "desc": "Enter dynamically generated text to a textfield.",
+      "html": "miniwob_html/miniwob/enter-text-dynamic.html"
+    },
+    {
+      "task_id": "miniwob.enter-time",
+      "subdomain": "enter-time",
+      "family": "enter-time",
+      "visual": false,
+      "desc": "Enter the specified time into the input.",
+      "html": "miniwob_html/miniwob/enter-time.html"
+    },
+    {
+      "task_id": "miniwob.find-greatest",
+      "subdomain": "find-greatest",
+      "family": "find-greatest",
+      "visual": false,
+      "desc": "Find the card with the greatest number.",
+      "html": "miniwob_html/miniwob/find-greatest.html"
+    },
+    {
+      "task_id": "miniwob.find-midpoint",
+      "subdomain": "find-midpoint",
+      "family": "find-midpoint",
+      "visual": false,
+      "desc": "Find the shortest mid-point of two points.",
+      "html": "miniwob_html/miniwob/find-midpoint.html"
+    },
+    {
+      "task_id": "miniwob.find-word",
+      "subdomain": "find-word",
+      "family": "find-word",
+      "visual": false,
+      "desc": "Find nth word in a block of text.",
+      "html": "miniwob_html/miniwob/find-word.html"
+    },
+    {
+      "task_id": "miniwob.focus-text",
+      "subdomain": "focus-text",
+      "family": "focus-text",
+      "visual": false,
+      "desc": "Focus into a text input.",
+      "html": "miniwob_html/miniwob/focus-text.html"
+    },
+    {
+      "task_id": "miniwob.focus-text-2",
+      "subdomain": "focus-text-2",
+      "family": "focus-text",
+      "visual": false,
+      "desc": "Focus on a specific text input.",
+      "html": "miniwob_html/miniwob/focus-text-2.html"
+    },
+    {
+      "task_id": "miniwob.form-sequence",
+      "subdomain": "form-sequence",
+      "family": "form-sequence",
+      "visual": false,
+      "desc": "Perform a series of instructions on a form.",
+      "html": "miniwob_html/miniwob/form-sequence.html"
+    },
+    {
+      "task_id": "miniwob.form-sequence-2",
+      "subdomain": "form-sequence-2",
+      "family": "form-sequence",
+      "visual": false,
+      "desc": "Perform a series of instructions on a form.",
+      "html": "miniwob_html/miniwob/form-sequence-2.html"
+    },
+    {
+      "task_id": "miniwob.form-sequence-3",
+      "subdomain": "form-sequence-3",
+      "family": "form-sequence",
+      "visual": false,
+      "desc": "Perform a series of instructions on a form.",
+      "html": "miniwob_html/miniwob/form-sequence-3.html"
+    },
+    {
+      "task_id": "miniwob.generate-number",
+      "subdomain": "generate-number",
+      "family": "generate-number",
+      "visual": false,
+      "desc": "Generate a random number that meets certain criteria.",
+      "html": "miniwob_html/miniwob/generate-number.html"
+    },
+    {
+      "task_id": "miniwob.grid-coordinate",
+      "subdomain": "grid-coordinate",
+      "family": "grid-coordinate",
+      "visual": false,
+      "desc": "Find the Cartesian coordinates on a grid.",
+      "html": "miniwob_html/miniwob/grid-coordinate.html"
+    },
+    {
+      "task_id": "miniwob.guess-number",
+      "subdomain": "guess-number",
+      "family": "guess-number",
+      "visual": false,
+      "desc": "Guess the number.",
+      "html": "miniwob_html/miniwob/guess-number.html"
+    },
+    {
+      "task_id": "miniwob.highlight-text",
+      "subdomain": "highlight-text",
+      "family": "highlight-text",
+      "visual": false,
+      "desc": "Highlight all the text.",
+      "html": "miniwob_html/miniwob/highlight-text.html"
+    },
+    {
+      "task_id": "miniwob.highlight-text-2",
+      "subdomain": "highlight-text-2",
+      "family": "highlight-text",
+      "visual": false,
+      "desc": "Highlight the specified paragraph.",
+      "html": "miniwob_html/miniwob/highlight-text-2.html"
+    },
+    {
+      "task_id": "miniwob.hot-cold",
+      "subdomain": "hot-cold",
+      "family": "hot-cold",
+      "visual": false,
+      "desc": "Find and click on the hot area.",
+      "html": "miniwob_html/miniwob/hot-cold.html"
+    },
+    {
+      "task_id": "miniwob.identify-shape",
+      "subdomain": "identify-shape",
+      "family": "identify-shape",
+      "visual": false,
+      "desc": "Identify a randomly generated shape.",
+      "html": "miniwob_html/miniwob/identify-shape.html"
+    },
+    {
+      "task_id": "miniwob.login-user",
+      "subdomain": "login-user",
+      "family": "login-user",
+      "visual": false,
+      "desc": "Enter user login details into the form.",
+      "html": "miniwob_html/miniwob/login-user.html"
+    },
+    {
+      "task_id": "miniwob.login-user-popup",
+      "subdomain": "login-user-popup",
+      "family": "login-user-popup",
+      "visual": false,
+      "desc": "[login-user] Random popup.",
+      "html": "miniwob_html/miniwob/login-user-popup.html"
+    },
+    {
+      "task_id": "miniwob.multi-layouts",
+      "subdomain": "multi-layouts",
+      "family": "multi-layouts",
+      "visual": false,
+      "desc": "Fill in forms of varying layouts.",
+      "html": "miniwob_html/miniwob/multi-layouts.html"
+    },
+    {
+      "task_id": "miniwob.multi-orderings",
+      "subdomain": "multi-orderings",
+      "family": "multi-orderings",
+      "visual": false,
+      "desc": "Fill in forms with shuffled field orderings.",
+      "html": "miniwob_html/miniwob/multi-orderings.html"
+    },
+    {
+      "task_id": "miniwob.navigate-tree",
+      "subdomain": "navigate-tree",
+      "family": "navigate-tree",
+      "visual": false,
+      "desc": "Navigate a file tree to find a specified file or folder.",
+      "html": "miniwob_html/miniwob/navigate-tree.html"
+    },
+    {
+      "task_id": "miniwob.number-checkboxes",
+      "subdomain": "number-checkboxes",
+      "family": "number-checkboxes",
+      "visual": false,
+      "desc": "Draw a given number using checkboxes.",
+      "html": "miniwob_html/miniwob/number-checkboxes.html"
+    },
+    {
+      "task_id": "miniwob.odd-or-even",
+      "subdomain": "odd-or-even",
+      "family": "odd-or-even",
+      "visual": false,
+      "desc": "Mark each number as odd or even.",
+      "html": "miniwob_html/miniwob/odd-or-even.html"
+    },
+    {
+      "task_id": "miniwob.order-food",
+      "subdomain": "order-food",
+      "family": "order-food",
+      "visual": false,
+      "desc": "Order food items from a menu.",
+      "html": "miniwob_html/miniwob/order-food.html"
+    },
+    {
+      "task_id": "miniwob.phone-book",
+      "subdomain": "phone-book",
+      "family": "phone-book",
+      "visual": false,
+      "desc": "Find a contact in a phone book.",
+      "html": "miniwob_html/miniwob/phone-book.html"
+    },
+    {
+      "task_id": "miniwob.read-table",
+      "subdomain": "read-table",
+      "family": "read-table",
+      "visual": false,
+      "desc": "Read information out from a table.",
+      "html": "miniwob_html/miniwob/read-table.html"
+    },
+    {
+      "task_id": "miniwob.read-table-2",
+      "subdomain": "read-table-2",
+      "family": "read-table",
+      "visual": false,
+      "desc": "Read multiple pieces of information out from a table.",
+      "html": "miniwob_html/miniwob/read-table-2.html"
+    },
+    {
+      "task_id": "miniwob.resize-textarea",
+      "subdomain": "resize-textarea",
+      "family": "resize-textarea",
+      "visual": false,
+      "desc": "Resize a textarea in a given direction.",
+      "html": "miniwob_html/miniwob/resize-textarea.html"
+    },
+    {
+      "task_id": "miniwob.right-angle",
+      "subdomain": "right-angle",
+      "family": "right-angle",
+      "visual": false,
+      "desc": "Given two points, add a third point to create a right angle.",
+      "html": "miniwob_html/miniwob/right-angle.html"
+    },
+    {
+      "task_id": "miniwob.scroll-text",
+      "subdomain": "scroll-text",
+      "family": "scroll-text",
+      "visual": false,
+      "desc": "Scroll through a text area element and enter last word into text area.",
+      "html": "miniwob_html/miniwob/scroll-text.html"
+    },
+    {
+      "task_id": "miniwob.scroll-text-2",
+      "subdomain": "scroll-text-2",
+      "family": "scroll-text",
+      "visual": false,
+      "desc": "Scroll through a text area in a given direction.",
+      "html": "miniwob_html/miniwob/scroll-text-2.html"
+    },
+    {
+      "task_id": "miniwob.search-engine",
+      "subdomain": "search-engine",
+      "family": "search-engine",
+      "visual": false,
+      "desc": "Search through a bunch of results to find a specified link.",
+      "html": "miniwob_html/miniwob/search-engine.html"
+    },
+    {
+      "task_id": "miniwob.sign-agreement",
+      "subdomain": "sign-agreement",
+      "family": "sign-agreement",
+      "visual": false,
+      "desc": "Sign a user agreement.",
+      "html": "miniwob_html/miniwob/sign-agreement.html"
+    },
+    {
+      "task_id": "miniwob.simple-algebra",
+      "subdomain": "simple-algebra",
+      "family": "simple-algebra",
+      "visual": false,
+      "desc": "Solve for X.",
+      "html": "miniwob_html/miniwob/simple-algebra.html"
+    },
+    {
+      "task_id": "miniwob.simple-arithmetic",
+      "subdomain": "simple-arithmetic",
+      "family": "simple-arithmetic",
+      "visual": false,
+      "desc": "Perform some arithmetic math operations.",
+      "html": "miniwob_html/miniwob/simple-arithmetic.html"
+    },
+    {
+      "task_id": "miniwob.social-media",
+      "subdomain": "social-media",
+      "family": "social-media",
+      "visual": false,
+      "desc": "Interact with a social media feed.",
+      "html": "miniwob_html/miniwob/social-media.html"
+    },
+    {
+      "task_id": "miniwob.social-media-all",
+      "subdomain": "social-media-all",
+      "family": "social-media-all",
+      "visual": false,
+      "desc": "[social-media] Do some action on all matching entries.",
+      "html": "miniwob_html/miniwob/social-media-all.html"
+    },
+    {
+      "task_id": "miniwob.social-media-some",
+      "subdomain": "social-media-some",
+      "family": "social-media-some",
+      "visual": false,
+      "desc": "[social-media] Do some action on some matching entries.",
+      "html": "miniwob_html/miniwob/social-media-some.html"
+    },
+    {
+      "task_id": "miniwob.stock-market",
+      "subdomain": "stock-market",
+      "family": "stock-market",
+      "visual": false,
+      "desc": "Buy from the stock market below a specified price.",
+      "html": "miniwob_html/miniwob/stock-market.html"
+    },
+    {
+      "task_id": "miniwob.terminal",
+      "subdomain": "terminal",
+      "family": "terminal",
+      "visual": false,
+      "desc": "Use the terminal to delete a file.",
+      "html": "miniwob_html/miniwob/terminal.html"
+    },
+    {
+      "task_id": "miniwob.text-editor",
+      "subdomain": "text-editor",
+      "family": "text-editor",
+      "visual": false,
+      "desc": "Modify a text's style in a text-editor.",
+      "html": "miniwob_html/miniwob/text-editor.html"
+    },
+    {
+      "task_id": "miniwob.text-transform",
+      "subdomain": "text-transform",
+      "family": "text-transform",
+      "visual": false,
+      "desc": "Enter slightly transformed text into a text box.",
+      "html": "miniwob_html/miniwob/text-transform.html"
+    },
+    {
+      "task_id": "miniwob.tic-tac-toe",
+      "subdomain": "tic-tac-toe",
+      "family": "tic-tac-toe",
+      "visual": false,
+      "desc": "Win a game of tic-tac-toe.",
+      "html": "miniwob_html/miniwob/tic-tac-toe.html"
+    },
+    {
+      "task_id": "miniwob.unicode-test",
+      "subdomain": "unicode-test",
+      "family": "unicode-test",
+      "visual": false,
+      "desc": "Click on the button with the correct Unicode text.",
+      "html": "miniwob_html/miniwob/unicode-test.html"
+    },
+    {
+      "task_id": "miniwob.use-autocomplete",
+      "subdomain": "use-autocomplete",
+      "family": "use-autocomplete",
+      "visual": false,
+      "desc": "Use autocomplete element efficiently.",
+      "html": "miniwob_html/miniwob/use-autocomplete.html"
+    },
+    {
+      "task_id": "miniwob.use-autocomplete-nodelay",
+      "subdomain": "use-autocomplete-nodelay",
+      "family": "use-autocomplete-nodelay",
+      "visual": false,
+      "desc": "[use-autocomplete] Removed delay.",
+      "html": "miniwob_html/miniwob/use-autocomplete-nodelay.html"
+    },
+    {
+      "task_id": "miniwob.use-colorwheel",
+      "subdomain": "use-colorwheel",
+      "family": "use-colorwheel",
+      "visual": false,
+      "desc": "Use a color wheel.",
+      "html": "miniwob_html/miniwob/use-colorwheel.html"
+    },
+    {
+      "task_id": "miniwob.use-colorwheel-2",
+      "subdomain": "use-colorwheel-2",
+      "family": "use-colorwheel",
+      "visual": false,
+      "desc": "Use a color wheel given specific random color.",
+      "html": "miniwob_html/miniwob/use-colorwheel-2.html"
+    },
+    {
+      "task_id": "miniwob.use-slider",
+      "subdomain": "use-slider",
+      "family": "use-slider",
+      "visual": false,
+      "desc": "Use a slider to select a particular value.",
+      "html": "miniwob_html/miniwob/use-slider.html"
+    },
+    {
+      "task_id": "miniwob.use-slider-2",
+      "subdomain": "use-slider-2",
+      "family": "use-slider",
+      "visual": false,
+      "desc": "Use sliders to create a given combination.",
+      "html": "miniwob_html/miniwob/use-slider-2.html"
+    },
+    {
+      "task_id": "miniwob.use-spinner",
+      "subdomain": "use-spinner",
+      "family": "use-spinner",
+      "visual": false,
+      "desc": "Use a spinner to select given number.",
+      "html": "miniwob_html/miniwob/use-spinner.html"
+    },
+    {
+      "task_id": "miniwob.visual-addition",
+      "subdomain": "visual-addition",
+      "family": "visual-addition",
+      "visual": true,
+      "desc": "Count the total number of blocks.",
+      "html": "miniwob_html/miniwob/visual-addition.html"
+    }
+  ]
+}
