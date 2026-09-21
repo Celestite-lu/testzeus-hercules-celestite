@@ -18,6 +18,7 @@ from record2gherkin.benchmark.orchestrator import (
     HERCULES_BUDGET_CAP,
     RETRY_BUDGET,
     BenchmarkError,
+    Cell,
     Orchestrator,
     assert_budget,
     hercules_budget,
@@ -196,3 +197,178 @@ def test_f23_manifest_fields_and_no_secrets(tmp_path: Path, tasks: list[dict[str
     assert manifest["metrics"]["overall"]["total"] == 10
     assert "api_key" not in json.dumps(manifest).lower()
     assert "redacted" not in json.dumps(manifest).lower()
+
+
+# ---------------------------------------------------------------------------------------------
+# F24/F25 cell 收尾完整性扫描（安全审查 R1 §4.2/§4.3 = H2 + H3；spec §7.1/§7.6）
+# ---------------------------------------------------------------------------------------------
+
+#: 每个真实 stdout.log 里都出现的工具注册行——绝不能作为沙箱**调用**证据（否则每 cell 误判）。
+SANDBOX_REGISTRATION_LINES = (
+    "[2026-09-21 23:02:41] INFO {langchain_tools.py:166} - [TOOL_DEBUG] Processing tool 'execute_python_sandbox' for agent 'executor_nav_agent'",
+    "[2026-09-21 23:02:41] INFO {base_nav_agent.py:131} - Registered tool: execute_python_sandbox",
+)
+
+
+def _log_text(subdomain: str, seed: int, navigations: int = 1, *, extra_lines: tuple[str, ...] = ()) -> str:
+    """One realistic child ``stdout.log`` (header + registration lines + ``Opening URL`` lines)."""
+    lines = ["# run_id: miniwob__x", "# timed_out: False", "# returncode: 0", "", *SANDBOX_REGISTRATION_LINES]
+    for _ in range(navigations):
+        lines.append(f"[2026-09-21 23:02:50] INFO {{open_url.py:29}} - Opening URL: http://127.0.0.1:8462/miniwob/{subdomain}.html?r2g_seed={seed}&r2g_ms=240000 (force_new_tab=False)")
+    lines.extend(extra_lines)
+    return "\n".join(lines) + "\n"
+
+
+def _scan_orchestrator(tmp_path: Path, tasks: list[dict[str, Any]]) -> tuple[Orchestrator, Cell]:
+    view = Orchestrator("miniwob-pilot", stage="pilot", exp_root=tmp_path / "dev_runs", tasks=tasks)
+    return view, plan_cells("miniwob-pilot", "pilot", tasks=tasks)[0]
+
+
+def test_f24_renavigation_count_flags_but_never_rewrites_the_verdict(tmp_path: Path, tasks: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    """F24（H2/V4）：任务 URL 导航次数入行；>1 → flagged；官方奖励与 status 一字不改。"""
+    view, cell = _scan_orchestrator(tmp_path, tasks)
+    log_path = view._stdout_log_path(cell)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_path.write_text(_log_text(cell.subdomain, cell.seed, 1), encoding="utf-8")
+    once = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert once == orchestrator.CellScan(task_url_navigations=1, reward_records=0, flagged=False, invalid_reason=None)
+
+    log_path.write_text(_log_text(cell.subdomain, cell.seed, 2), encoding="utf-8")
+    twice = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert twice.task_url_navigations == 2 and twice.flagged is True
+    assert twice.invalid_reason is None  # V4 = 披露，不是无效（口径 5 保留官方奖励）
+
+    # 其它 seed / 其它任务的同一行不计入本 cell（同一 stdout.log 内也绝不串号）
+    other = _log_text(cell.subdomain, cell.seed + 1, 3) + _log_text("click-button", cell.seed, 3)
+    log_path.write_text(other, encoding="utf-8")
+    isolated = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert isolated.task_url_navigations == 0 and isolated.flagged is False
+
+    # 集成：#2 次导航的 run 落行时字段与判定都在，且 official_passed 仍由奖励决定
+    log_path.write_text(_log_text(cell.subdomain, cell.seed, 2), encoding="utf-8")
+    monkeypatch.setattr(
+        orchestrator.runner_module,
+        "run_feature",
+        lambda *args, **kwargs: orchestrator.runner_module.RunResult(
+            run_id=cell.run_id, status="passed", passed=False, duration_s=42.0, cost_usd=0.01, total_tokens=1000, junit_xml=None, failure_message=None, run_dir=str(view.runs_dir / cell.run_id)
+        ),
+    )
+    monkeypatch.setattr(orchestrator, "fetch_reward", lambda *args, **kwargs: {"path": f"/miniwob/{cell.subdomain}.html", "seed": str(cell.seed), "raw": 1, "done": True, "reason": ""})
+    row = view._execute_cell(cell, goal="Click the button.", started_at="2026-09-21T00:00:00+00:00", started=0.0)
+    assert row["task_url_navigations"] == 2
+    assert row["flagged"] is True and row["invalid_reason"] is None
+    assert row["status"] == "official_passed" and row["official_passed"] is True
+    assert row["reward_raw"] == 1.0
+
+
+def test_f24_file_url_and_sandbox_hits_invalidate_the_cell(tmp_path: Path, tasks: list[dict[str, Any]]) -> None:
+    """F24（H2/V5+V6）：``file://`` 与沙箱**调用**命中 → cell 无效 + 安全事件；注册行绝不误判。"""
+    view, cell = _scan_orchestrator(tmp_path, tasks)
+    log_path = view._stdout_log_path(cell)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 只有注册行 → 中性（每个真实 run 的日志都长这样）
+    log_path.write_text(_log_text(cell.subdomain, cell.seed, 1), encoding="utf-8")
+    assert orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed).flagged is False
+
+    # V5：本地文件逃逸（agent 打开 file:// 后 innerText 会把文件内容带进 LLM 上下文）
+    file_url = _log_text(cell.subdomain, cell.seed, 1, extra_lines=("[2026-09-21 23:03:00] INFO {open_url.py:29} - Opening URL: file:///tmp/r2g_audit/secret_probe.txt (force_new_tab=False)",))
+    log_path.write_text(file_url, encoding="utf-8")
+    scan = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert scan.flagged is True and scan.invalid_reason == orchestrator.INVALID_REASON_FILE_URL
+
+    # V6：沙箱真的被调用（两行调用标记都在 execute_python_sandbox.py 里）
+    sandbox = _log_text(
+        cell.subdomain,
+        cell.seed,
+        1,
+        extra_lines=(
+            "[2026-09-21 23:04:00] INFO {execute_python_sandbox.py:62} - Executing Python sandbox: file=/tmp/x.py, timeout=30s",
+            "[2026-09-21 23:04:00] INFO {execute_python_sandbox.py:70} - Using sandbox tenant: default (no tenant)",
+        ),
+    )
+    log_path.write_text(sandbox, encoding="utf-8")
+    scan = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert scan.flagged is True and scan.invalid_reason == orchestrator.INVALID_REASON_SANDBOX
+
+    # 两个安全事件同时命中 → 两个理由都在（排序去重，便于报告按字符串统计）
+    both = file_url + "\n" + sandbox
+    log_path.write_text(both, encoding="utf-8")
+    scan = orchestrator.scan_cell_log(log_path, subdomain=cell.subdomain, seed=cell.seed)
+    assert scan.invalid_reason == f"{orchestrator.INVALID_REASON_FILE_URL}; {orchestrator.INVALID_REASON_SANDBOX}"
+
+    # 日志缺失 → 中性（没有证据绝不下结论）
+    assert orchestrator.scan_cell_log(tmp_path / "missing.log", subdomain=cell.subdomain, seed=cell.seed) == orchestrator.CellScan()
+
+
+def test_f24_merge_combines_both_scans() -> None:
+    """F24 补充：``CellScan.merge`` 字段级合并（导航取大、flagged 取或、理由排序去重）。"""
+    from record2gherkin.benchmark.orchestrator import CellScan
+
+    left = CellScan(task_url_navigations=2, reward_records=1, flagged=True, invalid_reason=None)
+    right = CellScan(task_url_navigations=0, reward_records=2, flagged=True, invalid_reason="b")
+    merged = left.merge(right)
+    assert merged == CellScan(task_url_navigations=2, reward_records=2, flagged=True, invalid_reason="b")
+    assert CellScan().merge(CellScan()) == CellScan()
+    assert CellScan(invalid_reason="b").merge(CellScan(invalid_reason="a")).invalid_reason == "a; b"
+
+
+def test_f25_reward_record_count_reason_domain_and_consistency(tmp_path: Path, tasks: list[dict[str, Any]]) -> None:
+    """F25（H3/V3）：行数超过页面加载数、reason 出域、done/raw 不自洽 → flagged；合法流不误判。"""
+    view, cell = _scan_orchestrator(tmp_path, tasks)
+    rewards = view.rewards_path
+    rewards.parent.mkdir(parents=True, exist_ok=True)
+
+    def _record(**overrides: Any) -> dict[str, Any]:
+        payload = {"path": f"/miniwob/{cell.subdomain}.html", "seed": str(cell.seed), "reward": 1, "raw": 1, "done": True, "reason": "", "received_at": "2026-09-21T00:00:30+00:00"}
+        payload.update(overrides)
+        return payload
+
+    def _write(*records: dict[str, Any]) -> None:
+        rewards.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    def _scan(**overrides: Any) -> orchestrator.CellScan:
+        return orchestrator.scan_cell_rewards(rewards, subdomain=cell.subdomain, seed=cell.seed, page_loads=1, **overrides)
+
+    _write(_record())
+    assert _scan() == orchestrator.CellScan(task_url_navigations=0, reward_records=1, flagged=False, invalid_reason=None)
+
+    # 记录数 > 页面加载数（伪造/额外 POST；1 次加载却落 2 行）
+    _write(_record(), _record())
+    assert _scan().flagged is True and _scan().reward_records == 2
+
+    # reason 出域（合法域只有 '' / 'timed out' / unicode-test 的两个值）
+    _write(_record(reason="audit-forgery"))
+    assert _scan().flagged is True
+    for legal in ("", "timed out", "Cool!", "You clicked on X when you should have clicked on Y"):
+        _write(_record(reason=legal))
+        assert _scan().flagged is False, legal
+
+    # done/raw 不自洽（reward hook 只会写 done=true + 数字 raw）
+    for bad in (_record(done=False), _record(raw=None), _record(raw=True), _record(raw="1")):
+        _write(bad)
+        assert _scan().flagged is True, bad
+
+    # 页面自身超时记录合法（raw=-1, reason='timed out'）
+    _write(_record(reward=-1, raw=-1, reason="timed out"))
+    assert _scan().flagged is False
+
+    # 其它 cell 的记录（同任务不同 seed / 同 seed 不同任务）不参与本 cell 判定
+    _write(_record(seed=str(cell.seed + 1)), {"path": "/miniwob/click-button.html", "seed": str(cell.seed), "raw": 1, "done": True, "reason": ""})
+    assert _scan() == orchestrator.CellScan()
+
+    # 重试窗口：上一轮 attempt 的历史记录（received_at 在这一轮开始之前）不计入本轮的判定
+    _write(_record(received_at="2026-09-21T00:00:10+00:00"), _record())
+    windowed = _scan(started_at="2026-09-21T00:00:20+00:00", finished_at="2026-09-21T00:10:00+00:00")
+    assert windowed.reward_records == 1 and windowed.flagged is False
+    # 没有窗口（缺 started_at/finished_at）时两条都算 → 按行数异常 flagged（宁多勿漏）
+    assert _scan().reward_records == 2 and _scan().flagged is True
+
+    # 伪造记录照样不改判（only flagged）：集成行里 official_passed 仍由奖励本身决定
+    _write(_record(reason="audit-forgery"))
+    log_path = view._stdout_log_path(cell)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(_log_text(cell.subdomain, cell.seed, 1), encoding="utf-8")
+    scan = view._scan_cell(cell, started_at=None, finished_at=None)
+    assert scan.flagged is True and scan.invalid_reason is None and scan.reward_records == 1

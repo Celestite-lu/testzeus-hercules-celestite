@@ -31,6 +31,15 @@ VERBATIM_PATCH_LINES = (
     "var orig = core.endEpisode;",
 )
 
+#: H1 安全加固（审查报告 §2.V1/V2）：必须在补丁 A 的标记**之内**、``startEpisodeReal()`` 之后，
+#: 且用 ``display:none`` 而不是 remove（endEpisode 仍要写 ``#episode-id`` 等子元素）。
+HARDENING_PATCH_LINES = (
+    'var hud = document.getElementById("reward-display");',
+    'if (hud) { hud.style.display = "none"; }',
+    "core.updateDisplay = function () {}; /* 终局不回写 HUD 文本 */",
+    "core.startEpisode = function () {}; /* endEpisode 尾部不再重新显示 START 覆盖层 */",
+)
+
 
 def test_b6_vendored_bytes_are_served_unchanged(miniwob_server: MiniWobServer, html_root: Path) -> None:
     """B6：``GET /miniwob/click-test.html`` → 200 且与 vendored 文件字节一致；``Cache-Control: no-store``。"""
@@ -75,6 +84,27 @@ def test_b7_core_js_with_query_is_patched_too(miniwob_server: MiniWobServer, htm
     status, body, _ = http_get(f"{miniwob_server.base_url}/core/core.js?v=7")
     assert status == 200
     assert body == patch_core_js(source)
+
+
+def test_b7_hardening_lives_inside_patch_a_after_the_auto_start(miniwob_server: MiniWobServer) -> None:
+    """B7 补充（H1）：安全加固四行位于补丁 A 标记内、``startEpisodeReal()`` 之后，且不触碰补丁 B。"""
+    _, body, _ = http_get(f"{miniwob_server.base_url}/core/core.js")
+    text = body.decode("utf-8")
+
+    start = text.index("/* __R2G_PATCH_START__ */")
+    end = text.index("/* __R2G_PATCH_END__ */")
+    assert start < end
+    patch_a = text[start : end + len("/* __R2G_PATCH_END__ */")]
+    for line in HARDENING_PATCH_LINES:
+        assert line in patch_a, f"hardening line missing from patch A: {line}"
+    # 加固必须在开局成功之后（开局失败时页面上不存在 HUD/cover，也不应改写 core 方法）
+    assert patch_a.index("core.startEpisodeReal();") < patch_a.index("core.updateDisplay = function () {};")
+    assert patch_a.index("core.updateDisplay = function () {};") < patch_a.index("core.startEpisode = function () {};")
+    assert "remove(" not in patch_a  # 绝不移除节点：endEpisode 仍要写 #episode-id
+
+    # 补丁 B（reward hook）逐字未变
+    assert "var orig = core.endEpisode;" in text
+    assert 'x.open("POST", "/__r2g_reward", false); /* 同步：确保页面销毁前送达 */' in text
 
 
 @pytest.mark.parametrize(

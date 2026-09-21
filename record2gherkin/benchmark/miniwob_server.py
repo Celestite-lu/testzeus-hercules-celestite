@@ -6,7 +6,10 @@ scripts to the served ``core/core.js`` (a pure append — the vendored bytes are
 
 * **auto-start** (``r2g_seed`` in the query) — waits for the page ``onload`` *and* ``core.cover_div``
   before ``Math.seedrandom(seed); core.EPISODE_MAX_TIME = ms; core.startEpisodeReal()``, so the same
-  ``(task, seed)`` always opens the same episode (review 必改 1.4).
+  ``(task, seed)`` always opens the same episode (review 必改 1.4).  It then applies the security
+  hardening of 安全审查 R1 §2.V1/V2 (H1): the reward HUD (``#reward-display``) is hidden from
+  ``innerText`` and both ``core.updateDisplay`` and ``core.startEpisode`` are stubbed out, so neither
+  the official reward text nor a clickable ``START`` re-roll overlay reaches the agent's text view.
 * **reward hook** — wraps ``core.endEpisode`` and POSTs the terminal state to ``/__r2g_reward``
   synchronously (the page may be destroyed right after).
 
@@ -49,7 +52,20 @@ PATCH_START_MARKER = "__R2G_PATCH_START__"
 PATCH_END_MARKER = "__R2G_PATCH_END__"
 REWARD_HOOK_MARKER = "__R2G_REWARD_HOOK__"
 
-#: spec §3.2 补丁 A (auto-start), verbatim — the review-revised text (必改 1.4).
+#: spec §3.2 补丁 A (auto-start), verbatim — the review-revised text (必改 1.4) plus the security
+#: hardening of 安全审查 R1 §2.V1/V2 (H1).  The hardening runs *after* ``startEpisodeReal()`` succeeded:
+#:
+#: * ``#reward-display`` is hidden with ``display: none`` — ``innerText`` skips hidden subtrees, so the
+#:   agent's text view (``get_page_text`` → ``root.innerText``) no longer carries ``Last reward: ...``,
+#:   ``Time left: ...`` or ``Episodes done: ...``.  ``element.remove()`` is deliberately **not** used:
+#:   ``endEpisode`` still writes ``#episode-id``, which would throw ``TypeError`` on a removed subtree.
+#: * ``core.updateDisplay`` is stubbed so a terminal reward is never written back into the HUD.
+#: * ``core.startEpisode`` is stubbed so the ``endEpisode`` tail (``core.js:145``) can no longer
+#:   re-show the ``START`` cover (``#sync-task-cover``) — that overlay was a plain DOM click away from
+#:   re-opening the ``(task, seed)`` instance with a fresh 240s timer (V2 re-roll).
+#:
+#: ``#query`` (the instruction area the goal pre-read depends on) is untouched.  The reward hook
+#: (补丁 B) is appended after this block, so the terminal POST still fires.
 AUTO_START_PATCH = """/* __R2G_PATCH_START__ */
 (function () {
   function q(name) {
@@ -67,6 +83,14 @@ AUTO_START_PATCH = """/* __R2G_PATCH_START__ */
         Math.seedrandom(seed);
         core.EPISODE_MAX_TIME = ms;
         core.startEpisodeReal();
+        /* 安全加固（R1 §2.V1/V2）：HUD 与 START 覆盖层对 agent 不可见/不可用。
+           位置必须在 startEpisodeReal() 之后：此时页面自己的 startEpisode() 已建好
+           #reward-display 与 #sync-task-cover（cover_div 非空是本分支成立的前提）。
+           纯追加；用 display:none 而非 remove（endEpisode 仍要写 #episode-id 等子元素）。 */
+        var hud = document.getElementById("reward-display");
+        if (hud) { hud.style.display = "none"; }
+        core.updateDisplay = function () {}; /* 终局不回写 HUD 文本 */
+        core.startEpisode = function () {}; /* endEpisode 尾部不再重新显示 START 覆盖层 */
         clearInterval(timer); /* 只在开局成功后停止轮询 */
       } catch (e) {
         if (tries > 200) { clearInterval(timer); window.__R2G_START_ERROR = String(e); }
