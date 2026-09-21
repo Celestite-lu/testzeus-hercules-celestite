@@ -43,6 +43,10 @@ ROW_KEYS: tuple[str, ...] = (
     "started_at",
     "finished_at",
     "model",
+    # 安全扫描注解（spec §7.6）；不参与任何指标分母，只做逐行披露。
+    "task_url_navigations",
+    "flagged",
+    "invalid_reason",
 )
 
 OFFICIAL_PASSED = "official_passed"

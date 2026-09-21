@@ -14,6 +14,12 @@
 3. 每 task 单 seed 单次，非官方多 instance 均值口径。
 4. **官方成败以页面原生奖励为唯一权威**（`reward_raw > 0`）；Hercules JUnit 结果与奖励不一致的行如实标记 disagreement，不改判。
 
+**基准限制披露三条（安全审查 R1 §4.4 增补，P1；报告同样必须原样披露）**：
+
+5. **伺服补丁为纯追加**（spec §3.2、R1 §2.V1/V2/H1）：`core/core.js` 的响应体 = vendored 原文 + 追加补丁 A（auto-start + HUD/START 加固）与补丁 B（reward hook），vendored 字节从不改写；加固用 `display:none` 隐藏 `#reward-display` 并置空 `core.updateDisplay`/`core.startEpisode`，使官方奖励文本与 START 重开覆盖层都不出现在 agent 的文本视角（`body.innerText`）。加固**封的是 agent 的观察/点击路径**，不是 JS 执行能力：仍在页面上下文里的任何 JS（例如 V6 的沙箱 `page.evaluate`）都能直接调用 `core.endEpisode`/`core.startEpisodeReal`。
+6. **奖励收集端点无防伪造能力**（R1 §2.V3）：`POST /__r2g_reward` 只校验 `path`/`seed` 非空（§3.3），补丁 B 对浏览器公开，任何浏览器侧密钥都会出现在伺服的 `core.js` 里——"防伪造"在机制上不可根除，只能检测（§7.6 H3）+ 披露。`GET /__r2g_reward` 本体 404、"导航到端点读历史奖励"不成立（R1 §2.V8 实测）。
+7. **agent 可重新导航同 URL**（R1 §2.V4）：`open_url` 对 URL 无 scheme/次数限制，重开 Given 的同 seed URL 会重跑补丁 A → 同一实例从头开局、240s 计时重置、此前失败提交的终局状态作废。pilot 9 个已完成 run 中 5 个自发出现（非攻击行为）。r1 全量**保留官方奖励但逐行披露**（`task_url_navigations`/`flagged`，§7.6 H2），不据此改判；更严选项（`sessionStorage` 单次自动开局）见 R1 §4 可选项 B，未实施。
+
 与公开基线对比只引用可查证数字并注明设置差异（模型/观察空间/时间限制）。排行榜式图表、逐任务截图集、自动失败分析一律不做。
 
 ```
@@ -110,7 +116,7 @@ uv run --no-project --with browsergym-miniwob python record2gherkin/benchmark/bu
 
 仅对路径以 `/core/core.js` 结尾的 GET 生效：响应体 = vendored 文件原文 + **纯追加**两段补丁（不做文件内替换，避免锚点漂移；追加内容在原文件所有定义之后执行）。其余路径按字节原样伺服。补丁文本（实现时逐字嵌入 `miniwob_server.py` 常量，含标记注释供测试断言）：
 
-补丁 A（auto-start）：
+补丁 A（auto-start + 安全加固 H1）：
 
 ```js
 /* __R2G_PATCH_START__ */
@@ -130,6 +136,14 @@ uv run --no-project --with browsergym-miniwob python record2gherkin/benchmark/bu
         Math.seedrandom(seed);
         core.EPISODE_MAX_TIME = ms;
         core.startEpisodeReal();
+        /* 安全加固（R1 §2.V1/V2）：HUD 与 START 覆盖层对 agent 不可见/不可用。
+           位置必须在 startEpisodeReal() 之后：此时页面自己的 startEpisode() 已建好
+           #reward-display 与 #sync-task-cover（cover_div 非空是本分支成立的前提）。
+           纯追加；用 display:none 而非 remove（endEpisode 仍要写 #episode-id 等子元素）。 */
+        var hud = document.getElementById("reward-display");
+        if (hud) { hud.style.display = "none"; }
+        core.updateDisplay = function () {}; /* 终局不回写 HUD 文本 */
+        core.startEpisode = function () {}; /* endEpisode 尾部不再重新显示 START 覆盖层 */
         clearInterval(timer); /* 只在开局成功后停止轮询 */
       } catch (e) {
         if (tries > 200) { clearInterval(timer); window.__R2G_START_ERROR = String(e); }
@@ -180,6 +194,7 @@ uv run --no-project --with browsergym-miniwob python record2gherkin/benchmark/bu
 - 轮询条件 = `WOB_TASK_READY === true && document.readyState === "complete" && core.cover_div`：只等 `WOB_TASK_READY` 不够（core.js:49 默认即 `true`），会在重页面抢在 `onload` 前调 `startEpisodeReal()`，依赖此时还未创建的 `cover_div`/`click-canvas`——实测 book-flight 抛 `ReferenceError: ui_utils is not defined` 后永久失去自动开局（review 必改 1.4）。`clearInterval` 只在开局成功后执行，try 失败可重试至 200 次（~10s）；重试中的重复 `Math.seedrandom(seed)` 同 seed 恒等，不破坏确定性。
 - wrapper 先执行原 `endEpisode`（终局状态落定）再读全局并同步 POST；成功口径 = `raw > 0`（BrowserGym 同口径）。
 - 页面 240s 计时到点，core 自身以 `core.endEpisode(-1, false, 'timed out')`（core.js:101）结束 → 也会 POST（`done=true, raw=-1, reason="timed out"`，review 实测收到），harness 无需自己判断 episode 超时。
+- **安全加固（H1，R1 §2.V1/V2 + §4.1）**：仅当补丁 A 的自动开局**成功**后执行——`#reward-display` 置 `display:none`（`innerText` 跳过隐藏子树 → `get_page_text` 视角不再有 `Last reward/Time left/Episodes done`）、`core.updateDisplay` 置空（终局不回写 HUD）、`core.startEpisode` 置空（`core.js:145` 的 endEpisode 尾部不再重新显示 `START` 覆盖层，即关掉"点一下就重开同 (task,seed) 新实例 + 240s 重置"的重试洗白路径）。**用 `display:none` 不用 `element.remove()`**：`endEpisode` 仍要写 `#episode-id`，移除会抛 `TypeError`。`#query` 指令区（goal 预读依赖）不动；奖励 POST 路径（补丁 B）不受影响。加固不改判任何成绩，只关闭 agent 的观察/点击路径（披露见 §0 口径 5）。
 
 3.3 端点契约
 
@@ -266,9 +281,14 @@ Feature: MiniWoB++ <task_id>
   "failure_message": null,
   "started_at": "ISO8601",
   "finished_at": "ISO8601",
-  "model": "deepseek-v4-pro"
+  "model": "deepseek-v4-pro",
+  "task_url_navigations": 1,
+  "flagged": false,
+  "invalid_reason": null
 }
 ```
+
+末三个键是安全扫描注解（§7.6，安全审查 R1 H2/H3）：`task_url_navigations` = 本 cell 任务 URL 的导航次数（int）；`flagged` = 需人工复核/披露（bool）；`invalid_reason` = `null` 或命中的安全事件（`file_url_navigation` / `sandbox_tool_invoked`，多个按字典序 `"; "` 连接）。**三者都不参与 `status`/`official_passed` 的判定，也不进任何指标分母**（口径 4/5）。
 
 7.2 status 组装规则（确定性顺序，`official_passed` 一律 false 当且仅当非 passed）：
 
@@ -286,7 +306,7 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --stage full --dry-run
 ```
 
-流程：读 `--exp-id` → 装载任务表 → 选 cells（pilot = `PILOT_SUBDOMAINS`；full = 全表 125）→ **断点跳过**：已有 results.jsonl 行的 `(task_id, seed)` 直接跳过（`--force` 关闭）→ 预算护栏 `assert_budget`（§7.5）→ 起 miniwob_server 子进程 + `/healthz` 探活 → 逐 cell：`derive_seed` → `read_goal`（no_goal 则记行跳过）→ `render_feature` 落文件 → `run_feature(feature, run_id, project_root=<exp>/runs/<run_id>/opt, timeout_s=600)` → `GET /__r2g_reward/latest` → 组装结果行追加 `results.jsonl` → 结束（finally）停服务、写 `manifest.json`。
+流程：读 `--exp-id` → 装载任务表 → 选 cells（pilot = `PILOT_SUBDOMAINS`；full = 全表 125）→ **断点跳过**：已有 results.jsonl 行的 `(task_id, seed)` 直接跳过（`--force` 关闭）→ 预算护栏 `assert_budget`（§7.5）→ 起 miniwob_server 子进程 + `/healthz` 探活 → 逐 cell：`derive_seed` → `read_goal`（no_goal 则记行跳过）→ `render_feature` 落文件 → `run_feature(feature, run_id, project_root=<exp>/runs/<run_id>/opt, timeout_s=600)` → `GET /__r2g_reward/latest` → **收尾完整性扫描（§7.6）** → 组装结果行追加 `results.jsonl` → 结束（finally）停服务、写 `manifest.json`。
 
 - `--dry-run`：不进程、不预读、不写任何文件，仅打印每 cell 的 run_id/URL/feature 路径与预算合计。
 - 每 cell 独立 `project_root`（`prepare_run_dir` 语义与 exp001 一致），`stdout.log` 已脱敏。
@@ -302,6 +322,25 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 | **累计红线** | **142**（成本红线 $20，按 $0.13/次上限；`manifest.budget` 记录已用/上限） |
 
 重试仅限 timeout/no_junit/no_reward（基础设施类），每 cell 至多 1 次；用例失败（official_failed）绝不重跑。
+
+7.6 cell 收尾完整性扫描（安全审查 R1 §4.2/§4.3 = H2 + H3；`orchestrator.py` 的 `scan_cell_log` / `scan_cell_rewards`）
+
+每 cell 执行结束后，在**已落盘的产物**上做一次扫描（无网络、无浏览器），结论只写进 §7.1 的末三个键与一条 `logger.warning` 安全事件行；**绝不改判 `status`/`official_passed`**（口径 4/5）。
+
+| 检查 | 输入 | 判定 | 行内落点 |
+|---|---|---|---|
+| H2① 重导航（R1 V4） | `runs/<run_id>/stdout.log` 中同时含 `Opening URL:`、`miniwob/<subdomain>.html`、`r2g_seed=<seed>` 的行数 | 次数记入字段；`> 1` → `flagged=true` | `task_url_navigations`（int）、`flagged` |
+| H2② `file://` 逃逸（R1 V5） | 同上日志全文含 `file://` | cell 无效 + 安全事件 | `flagged=true`、`invalid_reason="file_url_navigation"` |
+| H2③ 沙箱调用（R1 V6） | 同上日志含 `execute_python_sandbox.py:62,70` 的**调用**标记（`Executing Python sandbox:` / `Using sandbox tenant`） | cell 无效 + 安全事件 | `flagged=true`、`invalid_reason="sandbox_tool_invoked"` |
+| H3① 记录数（R1 V3） | `rewards.jsonl` 中 `path` 末段 == `<subdomain>.html` 且 `seed` 相同、`received_at` 落在本 attempt 窗口内的行数 | `> max(task_url_navigations, 1)` → `flagged=true` | `flagged` |
+| H3② reason 域（R1 V3） | 同上记录的 `reason` | 出域 → `flagged=true`；合法域 = `{"", "timed out", "Cool!"}` ∪ 前缀 `"You clicked on "`（前两项来自 R1 §2.V3，后两项是复核 vendored 树后补的 `unicode-test.html:53,55` 终局原因） | `flagged` |
+| H3③ done/raw 自洽（R1 V3） | 同上记录的 `done`/`raw` | `done is not True` 或 `raw` 非数字 → `flagged=true` | `flagged` |
+
+- `flagged=true` 且 `invalid_reason=null` ⇒ **披露但保留官方奖励**（V4 重导航、V3 记录异常，r1 口径）；`invalid_reason` 非空 ⇒ 该 cell 判为**无效**（V5/V6 安全事件），行仍照录、成绩统计不剔除，由报告逐行披露。
+- H2③ 绝不能匹配工具**注册**日志（`[TOOL_DEBUG] ... 'execute_python_sandbox'` / `Registered tool: execute_python_sandbox` 在每个 run 里都出现）——只有 `execute_python_sandbox.py` 真正执行时才打印上述两行调用标记。
+- 日志缺失/不可读 → 中性结果（0 次导航、无标记）；`rewards.jsonl` 用容错读法（torn tail 不致命）。
+- 重试 cell 复用同一 `(path, seed)`：H3 只统计 `received_at ∈ [started_at, finished_at]` 的本轮记录（跨 attempt 的历史行不计入；无 `received_at` 的行按计入处理，宁多勿漏）。
+- H3① 是披露启发式而非不变量：reward hook 对**每次** `core.endEpisode` 调用都 POST（补丁 B），终局后仍被调用的任务可以合法地给同一页面加载追加记录。pilot 取证：11 条已记录 cell 运行全部为「一次加载一条记录」。
 
 ## 8. 指标 metrics.py
 
@@ -326,6 +365,7 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 **B 组 伺服与补丁（test_server_patch.py，线程内起服务 + 禁代理 urllib）**
 6. `GET /miniwob/click-test.html` → 200 且与 vendored 文件字节一致；响应头 `Cache-Control: no-store`
 7. `GET /core/core.js` → 前缀与 vendored 文件逐字节一致，且含 `__R2G_PATCH_START__`、`__R2G_REWARD_HOOK__`、`startEpisodeReal`、`/__r2g_reward` 字面量（补丁 = 纯追加）
+7b. （H1 增补）安全加固四行逐字出现在 `__R2G_PATCH_START__`…`__R2G_PATCH_END__` 之间、`core.startEpisodeReal();` 之后，且补丁 A 内不含 `remove(`（用 `display:none`，不移除节点）；补丁 B 逐字未变
 8. `GET /missing.html`、`GET /`、`GET /` 目录名 → 404；`/../etc/passwd` 形态 → 404（穿越防护）
 9. 端口被占 → 启动硬失败（参照 exp001 demo_server 行为）
 
@@ -338,18 +378,20 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 **D 组 goal 预读与 Gherkin（test_goal_gherkin.py）**
 14. `sanitize_goal`：`"`→`'`、换行/多空白折叠、strip（纯函数表驱动）
 15. `render_feature`：三段式 + URL 含 `r2g_seed` 与 `r2g_ms`；产物经 gherkin 解析入口通过；恰 1 Feature/1 Scenario
-16. **浏览器组（test_browser_miniwob.py，无浏览器环境 skip）**：真实伺服器 + 真实 vendored 页——(a) `?r2g_seed=` 打开后 auto-start 生效，证据 = `core.ept0 != null`、utterance 非空、`core.EPISODE_MAX_TIME === 240000`、无 `__R2G_START_ERROR`（**不得**用 `EPISODE_ID > 0`：开局成功后 `WOB_EPISODE_ID` 仍为 0，仅在 `core.endEpisode` 内自增，review 实测确认）；(b) 同 URL 两次打开 utterance 相同（同 seed 确定性）；(c) 页内 `core.endEpisode(1)` 后 `/latest` 取到 `raw>0, done=true`
+16. **浏览器组（test_browser_miniwob.py，无浏览器环境 skip）**：真实伺服器 + 真实 vendored 页——(a) `?r2g_seed=` 打开后 auto-start 生效，证据 = `core.ept0 != null`、utterance 非空、`core.EPISODE_MAX_TIME === 240000`、无 `__R2G_START_ERROR`（**不得**用 `EPISODE_ID > 0`：开局成功后 `WOB_EPISODE_ID` 仍为 0，仅在 `core.endEpisode` 内自增，review 实测确认）；(b) 同 URL 两次打开 utterance 相同（同 seed 确定性）；(c) 页内 `core.endEpisode(1)` 后 `/latest` 取到 `raw>0, done=true`；(d) （H1 增补）加固后 `body.innerText` 全程零 `reward/START/Time left/Episodes done` 命中、`#reward-display` 与 `#sync-task-cover` 均 `display:none`、覆盖层不可见且普通 DOM 点击超时、`endEpisode` 后 utterance 恒等（实例未重开），同页 `endEpisode(1)` 的奖励记录照常到达且 `rewards.jsonl` 恰一行
 
 **E 组 结果组装与指标（test_results_metrics.py，手写 fixture）**
 17. runner 超时 + 有 reward → status=timeout 且照录 reward；JUnit 缺失 → no_junit
 18. reward 缺失 → no_reward 且 disagreement=null；goal 失败 → no_goal 不执行
-19. `reward_raw=0` + junit_passed=True → official_failed + disagreement=True；`reward_raw>0` + junit_passed=False → official_passed + disagreement=True；一致 → disagreement=False
+19. `reward_raw=0` + junit_passed=True → official_failed + disagreement=True；`reward_raw>0` + junit_passed=False → official_passed + disagreement=True；一致 → disagreement=False；行键集合 == `metrics.ROW_KEYS`（含 §7.6 三键）
 20. 指标：Overall 分母含全部失败族；缺行计 0 并入 missing；FamilyRate 聚合正确；token/cost 均值排除 None 且 missing 计数正确；visual 组与 disagreement 清单正确
 
 **F 组 编排与护栏（test_orchestrator.py，dry-run / monkeypatch）**
 21. pilot/full cell 计划数 = 10 / 125；`assert_budget`(12, 130) ≤ 142 通过，超限抛错
 22. dry-run：无进程、无文件写入；打印项含 run_id、`?r2g_seed=` URL、feature 路径、预算合计
 23. 断点跳过：预置含某 cell 的 results.jsonl 后 dry-run 计划数递减；`--force` 恢复
+24. （H2 增补）收尾扫描：1 次导航不 flag、2 次导航 → `task_url_navigations=2, flagged=true, invalid_reason=null`；其它 seed/其它任务的同名行不串号；`file://` → `invalid_reason=file_url_navigation`；沙箱**调用**标记 → `invalid_reason=sandbox_tool_invoked`（工具**注册**行绝不误判）；日志缺失 → 中性；`CellScan.merge` 字段级合并；集成走 `_execute_cell` 后行内三键落位且 `official_passed` 仍由奖励决定
+25. （H3 增补）记录数 > 页面加载数 / `reason` 出域（合法域含 unicode-test 两个值）/ `done`、`raw` 不自洽 → `flagged=true` 且 `invalid_reason=null`；页面自身超时记录合法；其它 cell 记录不参与；重试窗口只算本轮 `received_at`
 
 ## 10. 验收标准
 
@@ -359,7 +401,8 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 4. pilot（`--exp-id miniwob-pilot --stage pilot`）：10 行结果；≥1 行 official_passed 且 `total_tokens` 非 None；§12 验证点全部回写 spec 后才允许开 full；Hercules 执行 ≤12。
 5. full（`--exp-id miniwob-full --stage full`）：125 行（失败也是行）、manifest 完整（含 metrics）、Hercules 累计 ≤130（两阶段合计红线 142）。
 6. 脱敏：对 `dev_runs/benchmark/`、`record2gherkin/`、`tests/`、`dev_docs/` 以 key 实值 grep 零命中（命令模板 `KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" <目录>`，key 不落文档）。
-7. `dev_docs/benchmark/test-report.md` 固化：总体/分家族（含 visual 组）通过率、AvgTokens/AvgDuration、disagreement 清单、JUnit 侧对照通过率、失败清单（run_id + 摘要）、**§0 四条口径披露原文**、与公开基线数字的引用及设置差异声明。
+7. `dev_docs/benchmark/test-report.md` 固化：总体/分家族（含 visual 组）通过率、AvgTokens/AvgDuration、disagreement 清单、JUnit 侧对照通过率、失败清单（run_id + 摘要）、**§0 四条口径披露原文 + 三条基准限制披露原文（口径 5/6/7）**、与公开基线数字的引用及设置差异声明。
+8. 安全加固（审查报告 R1 §4，P0）：H1 在独立端口（非 8462）实测复核 —— `body.innerText` 全程零 `reward/START/Time left/Episodes done` 命中、`#sync-task-cover` 不可见、`endEpisode` 后奖励 POST 完好、utterance 预读不变；H2/H3 扫描字段逐行落位（§7.6）；`flagged`/`invalid_reason` 的计数与名单在 test-report 披露。
 
 ## 11. Out of Scope
 

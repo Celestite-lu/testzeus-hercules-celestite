@@ -11,6 +11,12 @@ runs Hercules in a sub-process (:mod:`record2gherkin.evaluation.runner`) and fin
 server for the terminal reward — the **only** authority for ``official_passed`` (spec §0 口径 4).
 Every cell produces exactly one appended ``results.jsonl`` row; ``timeout`` / ``no_junit`` /
 ``no_reward`` cells may be retried once each (infrastructure only), a failed episode never is.
+
+Every executed cell is additionally scanned for integrity (安全审查 R1 §4.2/§4.3, spec §7.6) over the
+artefacts that are already on disk: the renavigation count, ``file://`` escapes and sandbox-tool calls
+from ``stdout.log`` (H2) plus the ``rewards.jsonl`` record count / ``reason`` domain of the cell (H3).
+The scan only annotates the row (``task_url_navigations`` / ``flagged`` / ``invalid_reason``) — it
+never rewrites ``status`` or ``official_passed``.
 """
 
 from __future__ import annotations
@@ -177,12 +183,18 @@ def build_result_row(
     started_at: str,
     finished_at: str,
     model: str | None = None,
+    task_url_navigations: int = 0,
+    flagged: bool = False,
+    invalid_reason: str | None = None,
 ) -> dict[str, Any]:
     """Assemble one ``results.jsonl`` row (spec §7.1) with the deterministic status rules of §7.2.
 
     ``runner_status=None`` means "not executed" (goal pre-read failed, §7.2.5).  The official verdict is
     ``reward_raw > 0`` and nothing else: a negative reward (the page's own ``timed out`` record is
     ``raw=-1``) is recorded as-is and still counts as an official failure.
+
+    The last three keys are the security-scan annotations of spec §7.6 (H2/H3): they never change
+    ``status``/``official_passed`` — the official reward stays the only authority (spec §0 口径 4).
     """
     if runner_status is None:
         status = STATUS_NO_GOAL
@@ -229,7 +241,183 @@ def build_result_row(
         "started_at": started_at,
         "finished_at": finished_at,
         "model": model,
+        "task_url_navigations": int(task_url_navigations),
+        "flagged": bool(flagged),
+        "invalid_reason": invalid_reason,
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# Cell 收尾完整性扫描（安全审查 R1 §4.2/§4.3，H2 + H3）
+# ---------------------------------------------------------------------------------------------
+
+#: ``open_url`` 的导航日志行标记（V4 计数依据：``Opening URL: <url> (force_new_tab=...)``）。
+TASK_URL_NAVIGATION_MARKER = "Opening URL:"
+#: 同一 cell 的任务 URL 被打开超过这个次数即 flagged（V4：240s 计时重置 / 失败提交可被重开洗白）。
+TASK_URL_NAVIGATION_FLAG_THRESHOLD = 1
+#: V5：本地文件逃逸；命中即 cell 无效（安全事件）。
+FILE_URL_MARKER = "file://"
+#: V6：Python 沙箱**被调用**的日志标记（``execute_python_sandbox.py:62,70``）。绝不能匹配工具注册
+#: 日志（``[TOOL_DEBUG] ... 'execute_python_sandbox'`` / ``Registered tool: execute_python_sandbox``
+#: 在每个 run 里都出现），否则每个 cell 都会被误判。
+SANDBOX_CALL_MARKERS = ("Executing Python sandbox:", "Using sandbox tenant")
+#: V3：合法 ``reason`` 域 = ``{"", "timed out"}``（审查报告 §2.V3）+ 复核 vendored 树后补充的
+#: ``unicode-test`` 两个终局原因（只有 ``core/core.js:102`` 与 ``miniwob/unicode-test.html:53,55``
+#: 传第三个参数；其余 129 个任务页都不传）。
+LEGAL_REWARD_REASONS = frozenset({"", "timed out", "Cool!"})
+LEGAL_REWARD_REASON_PREFIXES = ("You clicked on ",)
+
+#: ``invalid_reason`` 取值（非 null ⇒ 该 cell 判为无效，安全事件）。
+INVALID_REASON_FILE_URL = "file_url_navigation"
+INVALID_REASON_SANDBOX = "sandbox_tool_invoked"
+
+
+@dataclass(frozen=True)
+class CellScan:
+    """One cell's post-run integrity scan: the three §7.1 annotation keys (H2 stdout.log + H3 rewards).
+
+    ``flagged`` is the disclosure bit: it is set for the V4 renavigation count, for the V5/V6 security
+    events **and** for the V3 reward anomalies.  ``invalid_reason`` is only set by the V5/V6 security
+    events — a ``flagged`` row with ``invalid_reason=None`` is "disclose, don't re-judge" (spec §7.6).
+    """
+
+    task_url_navigations: int = 0
+    reward_records: int = 0
+    flagged: bool = False
+    invalid_reason: str | None = None
+
+    def merge(self, other: "CellScan") -> "CellScan":
+        """Conjunction of two scans (each field has exactly one producer, merging is fieldwise)."""
+        reasons = sorted({reason for reason in (self.invalid_reason, other.invalid_reason) if reason})
+        return CellScan(
+            task_url_navigations=max(self.task_url_navigations, other.task_url_navigations),
+            reward_records=max(self.reward_records, other.reward_records),
+            flagged=self.flagged or other.flagged,
+            invalid_reason="; ".join(reasons) or None,
+        )
+
+
+def _page_signature(subdomain: str, seed: int) -> tuple[str, str]:
+    """Two substrings that both have to appear in a log line for it to be *this* cell's page."""
+    return f"miniwob/{subdomain}.html", f"r2g_seed={seed}"
+
+
+def scan_cell_log(log_path: str | Path, *, subdomain: str, seed: int) -> CellScan:
+    """H2 — read the already-written ``stdout.log`` and do three things (安全审查 R1 §4.2).
+
+    ① count the navigations to this cell's seeded task URL (``task_url_navigations``); more than one
+    flags the row (V4: every renavigation re-runs patch A, resetting the 240s clock and discarding the
+    previous failed submission);
+    ② any ``file://`` in the log marks the cell invalid + security event (V5: local files — the API key
+    file included — can reach the LLM context through ``get_page_text``);
+    ③ any *call* marker of the Python sandbox tool does the same (V6: the restricted tenant is not a
+    security boundary — ``open()``, ``os.environ`` and ``page.evaluate`` are all reachable).
+
+    A missing/unreadable log yields a neutral scan (0 navigations, no marker): no evidence, no claim.
+    """
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return CellScan()
+    subdomain_marker, seed_marker = _page_signature(subdomain, seed)
+    navigations = 0
+    for line in text.splitlines():
+        if TASK_URL_NAVIGATION_MARKER in line and subdomain_marker in line and seed_marker in line:
+            navigations += 1
+
+    reasons: list[str] = []
+    if FILE_URL_MARKER in text:
+        reasons.append(INVALID_REASON_FILE_URL)
+    if any(marker in text for marker in SANDBOX_CALL_MARKERS):
+        reasons.append(INVALID_REASON_SANDBOX)
+    return CellScan(
+        task_url_navigations=navigations,
+        flagged=navigations > TASK_URL_NAVIGATION_FLAG_THRESHOLD or bool(reasons),
+        invalid_reason="; ".join(reasons) or None,
+    )
+
+
+def _reward_lines(rewards_path: str | Path) -> list[dict[str, Any]]:
+    """Tolerant ``rewards.jsonl`` read (a torn tail must not kill the scan; the server flushes per line)."""
+    try:
+        text = Path(rewards_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            continue
+        if isinstance(payload, Mapping):
+            lines.append(dict(payload))
+    return lines
+
+
+def _in_window(record: Mapping[str, Any], started_at: str | None, finished_at: str | None) -> bool:
+    """True when the server-received timestamp falls inside this attempt's window.
+
+    A cell that is retried reuses the same ``(path, seed)``, so the file holds the previous attempt's
+    records too; only the ones received during this attempt may be compared against this attempt's page
+    loads.  Records without a parseable ``received_at`` are counted (safer side).
+    """
+    received = record.get("received_at")
+    if not isinstance(received, str) or not received.strip():
+        return True
+    received = received.strip()
+    if isinstance(started_at, str) and started_at and received < started_at:
+        return False
+    if isinstance(finished_at, str) and finished_at and received > finished_at:
+        return False
+    return True
+
+
+def _matches_cell(record: Mapping[str, Any], *, subdomain: str, seed: int) -> bool:
+    """Same matching rule as the server's ``/latest``: path basename + seed (spec §3.3)."""
+    path = record.get("path")
+    if not isinstance(path, str) or path.rsplit("/", 1)[-1] != f"{subdomain}.html":
+        return False
+    return str(record.get("seed")) == str(seed)
+
+
+def scan_cell_rewards(
+    rewards_path: str | Path,
+    *,
+    subdomain: str,
+    seed: int,
+    page_loads: int,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> CellScan:
+    """H3 — check this cell's ``(path, seed)`` records in ``rewards.jsonl`` (安全审查 R1 §4.3, V3).
+
+    Three anomalies flag the row (never a re-judgement, spec §0 口径 4): the record count exceeds the
+    page loads of this attempt, a ``reason`` outside :data:`LEGAL_REWARD_REASONS` /
+    :data:`LEGAL_REWARD_REASON_PREFIXES`, or a record whose ``done``/``raw`` pair cannot come from the
+    reward hook (``done`` must be true, ``raw`` numeric).
+
+    The count rule is a disclosure heuristic, not an invariant: the reward hook POSTs on *every*
+    ``core.endEpisode`` call (``miniwob_server.REWARD_HOOK_PATCH``), so a task that keeps calling it
+    after the terminal episode can legitimately add records for one load.  Pilot evidence: exactly one
+    record per load in all 11 recorded cell runs.
+    """
+    records = [record for record in _reward_lines(rewards_path) if _matches_cell(record, subdomain=subdomain, seed=seed)]
+    records = [record for record in records if _in_window(record, started_at, finished_at)]
+
+    flagged = False
+    if len(records) > max(int(page_loads), 1):
+        flagged = True
+    for record in records:
+        reason = record.get("reason")
+        if not isinstance(reason, str) or not (reason in LEGAL_REWARD_REASONS or reason.startswith(LEGAL_REWARD_REASON_PREFIXES)):
+            flagged = True
+        raw = record.get("raw")
+        if record.get("done") is not True or raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            flagged = True
+    return CellScan(reward_records=len(records), flagged=flagged)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -520,6 +708,8 @@ class Orchestrator:
         result = runner_module.run_feature(feature_path, run_id=cell.run_id, project_root=project_root, timeout_s=self.timeout_s)
         junit_passed, junit_terminate = _junit_verdict(result)
         reward = fetch_reward(self.base_url, task=cell.subdomain, seed=cell.seed)
+        finished_at = _now()
+        scan = self._scan_cell(cell, started_at=started_at, finished_at=finished_at)
         return build_result_row(
             task=self._task_for(cell.task_id),
             seed=cell.seed,
@@ -535,9 +725,51 @@ class Orchestrator:
             total_tokens=result.total_tokens,
             cost_usd=result.cost_usd,
             started_at=started_at,
-            finished_at=_now(),
+            finished_at=finished_at,
             model=runner_module.LLM_MODEL_NAME,
+            task_url_navigations=scan.task_url_navigations,
+            flagged=scan.flagged,
+            invalid_reason=scan.invalid_reason,
         )
+
+    # -- cell integrity scan (安全审查 R1 §4.2/§4.3) ------------------------------------------
+
+    def _stdout_log_path(self, cell: Cell) -> Path:
+        """The already-written child log (``runs/<run_id>/stdout.log``, spec §4.2/§7.4)."""
+        return self.runs_dir / cell.run_id / "stdout.log"
+
+    def _scan_cell(self, cell: Cell, *, started_at: str | None = None, finished_at: str | None = None) -> CellScan:
+        """H2 + H3 for one cell, both over artefacts that are already on disk (no network, no browser).
+
+        A flagged cell is disclosed on the row and logged; only the V5/V6 security events make it
+        invalid (``invalid_reason``) — the official reward and ``status`` are never rewritten.
+        """
+        log_scan = scan_cell_log(self._stdout_log_path(cell), subdomain=cell.subdomain, seed=cell.seed)
+        reward_scan = scan_cell_rewards(
+            self.rewards_path,
+            subdomain=cell.subdomain,
+            seed=cell.seed,
+            page_loads=log_scan.task_url_navigations,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        scan = log_scan.merge(reward_scan)
+        if scan.invalid_reason:
+            logger.warning(
+                "orchestrator: SECURITY EVENT for %s -> cell invalid (%s); navigations=%s reward_records=%s",
+                cell.label,
+                scan.invalid_reason,
+                scan.task_url_navigations,
+                scan.reward_records,
+            )
+        elif scan.flagged:
+            logger.warning(
+                "orchestrator: %s flagged (renavigation=%s reward_records=%s; V3/V4 disclosed, official reward kept)",
+                cell.label,
+                scan.task_url_navigations,
+                scan.reward_records,
+            )
+        return scan
 
     def _task_for(self, task_id: str) -> dict[str, Any]:
         for task in self.tasks:

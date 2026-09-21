@@ -10,23 +10,23 @@
 
 | 命令 | 结果 |
 |---|---|
-| `uv run pytest tests/record2gherkin/benchmark -q` | **68 passed**（21.6s；离线：无 key、无外网；浏览器组仅 127.0.0.1 回环） |
-| `uv run pytest tests/record2gherkin -q` | **360 passed**（47.9s；全局无回归——本模块新增 68，改动前基线 292） |
+| `uv run pytest tests/record2gherkin/benchmark -q` | **75 passed**（29.1s；离线：无 key、无外网；浏览器组仅 127.0.0.1 回环）。安全加固前为 68，H1/H2/H3 补记见 §11 |
+| `uv run pytest tests/record2gherkin -q` | **367 passed**（55.6s；全局无回归——本模块新增 75，改动前基线 292/加固前 360，见 §11） |
 | `uv run isort record2gherkin/benchmark tests/record2gherkin/benchmark && uv run black --target-version py311 -l 200 record2gherkin/benchmark tests/record2gherkin/benchmark` | FMT-CLEAN（复跑 `--check` 亦通过；vendored html/js/json 未被格式化） |
-| 脱敏：`KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" dev_runs/ record2gherkin/ tests/ dev_docs/` | **零命中**；key 的 8 字符前/后缀同样零命中 |
+| 脱敏：`KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" dev_runs/ record2gherkin/ tests/ dev_docs/` | **零命中**；key 的 8 字符前/后缀同样零命中（§11 复核含加固后改动） |
 | 手动 curl 契约验证（伺服 CLI 一条命令） | 见 §5（`/healthz`、补丁 `core.js`、原样页面、`POST /__r2g_reward`、`/latest`、404 族、rewards.jsonl） |
 
-按文件分布（合计 68）：
+按文件分布（合计 75）：
 
 | 文件 | 通过数 | 覆盖 |
 |---|---|---|
 | `test_tasks.py` | 9 | A1-A5（125 行/字典序、html 存在、family/visual 派生、seed 派生、pilot 子集与 fail-fast）+ 读表校验 + PROVENANCE 逐项核对 |
-| `test_server_patch.py` | 15 | B6-B9（原样字节+no-store、`core.js` 纯追加补丁+逐字结构行、404/穿越/无目录列表、端口占用硬失败）+ `/healthz` |
+| `test_server_patch.py` | 16 | B6-B9（原样字节+no-store、`core.js` 纯追加补丁+逐字结构行、404/穿越/无目录列表、端口占用硬失败）+ `/healthz` + **B7 H1 加固行位于补丁 A 标记内且不移除节点** |
 | `test_reward_endpoint.py` | 13 | C10-C13（合法 POST→`/latest`、last-wins 与 seed 隔离、每次 POST 恰一行、非法体 400 不落盘）+ 负奖励记录 |
 | `test_goal_gherkin.py` | 10 | D14-D15（`sanitize_goal` 表驱动、双类型 utterance、三段式模板、上游解析入口 1 Feature/1 Scenario） |
-| `test_browser_miniwob.py` | 5 | D16(a)(b)(c) 真浏览器回环：auto-start 证据、无 seed 负例、同 seed 确定性、`endEpisode(1)`→POST、页面超时 `raw=-1` |
+| `test_browser_miniwob.py` | 7 | D16(a)(b)(c) 真浏览器回环：auto-start 证据、无 seed 负例、同 seed 确定性、`endEpisode(1)`→POST、页面超时 `raw=-1`；**(d) H1 加固：HUD/START 零命中、覆盖层不可点、实例不重开、奖励 POST 完好** |
 | `test_results_metrics.py` | 9 | E17-E20（状态组装 §7.2、disagreement 双向、指标分母/缺行/missing 计数）+ `load_rows` 容错 |
-| `test_orchestrator.py` | 7 | F21-F23（计划数 10/125、预算 12/130/142、dry-run 零副作用、断点跳过与 `--force`、重试规则、manifest 字段） |
+| `test_orchestrator.py` | 11 | F21-F23（计划数 10/125、预算 12/130/142、dry-run 零副作用、断点跳过与 `--force`、重试规则、manifest 字段）；**F24/F25 H2+H3 收尾扫描（重导航计数、`file://`/沙箱事件、rewards 行数/reason 域/done-raw 自洽、重试窗口、合并语义、`_execute_cell` 集成）** |
 
 补充说明：`uv run black --check tests/ testzeus_hercules/` 仍报 9 个**上游原有**文件会被重排（`core/agents/*`、`config.py` 等），与本次改动无关且不在允许改动范围内——本模块的两个目录零差异。
 
@@ -79,7 +79,7 @@ uv run --no-project --with browsergym-miniwob python record2gherkin/benchmark/bu
 
 | # | 验收标准 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | 本模块 pytest 全绿、离线可跑；`make fmt` 后 `--check` 通过 | ✅ | 68 passed（含 5 个回环浏览器用例；`SKIP_BROWSER_TESTS=1` 时 5 skip 仍全绿）；isort/black `--check` 零差异 |
+| 1 | 本模块 pytest 全绿、离线可跑；`make fmt` 后 `--check` 通过 | ✅ | 75 passed（含 7 个回环浏览器用例；`SKIP_BROWSER_TESTS=1` 时 7 skip 仍全绿）；isort/black `--check` 零差异；安全加固后复核见 §11 |
 | 2 | 构建产物入库且可复现（文件数/字节数与 PROVENANCE 一致；tasks.json 125 行、A 组全绿） | ✅ | §2：360 文件 / 4,988,677 字节 / 360 sha256 全对；tasks.json 125 行；A 组 9 passed；`.gitignore` 零误伤（378 文件可见） |
 | 3 | 伺服器一条命令启动，`/healthz` 与 `/__r2g_reward` 契约与 §3.3 一致（B/C 组 + 手动 curl 双证） | ✅ | B/C 组 28 passed；§5 curl 实录（healthz/补丁 js/原样页/POST/latest/404/rewards.jsonl） |
 | 4 | pilot：10 行结果、≥1 行 `official_passed` 且 `total_tokens` 非 None、Hercules ≤12 | ⏳ 待总编排 | 机制就绪：§7 命令；行组装/预算/断点跳过/重试全部离线锁定；`manifest.budget` 记录 used/cap |
@@ -150,15 +150,75 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-full --s
 9. **9 个上游文件本就不是 black-clean**（`testzeus_hercules/core/agents/*`、`config.py`、`utils/litellm_helper.py`、`tests/test_simple_hercules_langgraph.py` 等）：pre-existing，`make fmt` 会重排它们；本模块未触碰这些文件。
 10. **预读/执行 utterance 一致性只在 `click-test` 上机验证**（浏览器组 16b），spec §12 要求的多任务人工抽查留给 pilot。
 
-## 9. §0 四条口径披露原文（最终报告必须原样转载）
+## 9. §0 口径与限制披露原文（7 条，最终报告必须原样转载）
 
 1. 本基准测**执行内核能力**（自然语言任务 → Gherkin → Hercules 语义化执行），不含录制/蒸馏（exp001 已覆盖）。
 2. `EPISODE_MAX_TIME` 由原生 10s 放宽至 240s（默认，参数化），沿用 BrowserGym `episode_max_time` 可配的做法；若 pilot 后调整，报告须披露最终值与理由。
 3. 每 task 单 seed 单次，非官方多 instance 均值口径。
 4. **官方成败以页面原生奖励为唯一权威**（`reward_raw > 0`）；Hercules JUnit 结果与奖励不一致的行如实标记 disagreement，不改判。
+5. **伺服补丁为纯追加**：`core/core.js` 的响应体 = vendored 原文 + 追加补丁 A（auto-start + HUD/START 加固）与补丁 B（reward hook），vendored 字节从不改写；加固用 `display:none` 隐藏 `#reward-display` 并置空 `core.updateDisplay`/`core.startEpisode`，使官方奖励文本与 START 重开覆盖层都不出现在 agent 的文本视角（`body.innerText`）。加固**封的是 agent 的观察/点击路径**，不是 JS 执行能力：仍在页面上下文里的任何 JS（例如 V6 的沙箱 `page.evaluate`）都能直接调用 `core.endEpisode`/`core.startEpisodeReal`。
+6. **奖励收集端点无防伪造能力**：`POST /__r2g_reward` 只校验 `path`/`seed` 非空，补丁 B 对浏览器公开，任何浏览器侧密钥都会出现在伺服的 `core.js` 里——"防伪造"在机制上不可根除，只能检测（spec §7.6 H3）+ 披露。`GET /__r2g_reward` 本体 404、"导航到端点读历史奖励"不成立。
+7. **agent 可重新导航同 URL**：`open_url` 对 URL 无 scheme/次数限制，重开 Given 的同 seed URL 会重跑补丁 A → 同一实例从头开局、240s 计时重置、此前失败提交的终局状态作废。pilot 9 个已完成 run 中 5 个自发出现（非攻击行为）。r1 全量**保留官方奖励但逐行披露**（`task_url_navigations`/`flagged`），不据此改判；更严选项（`sessionStorage` 单次自动开局）未实施。
+
+（口径 5/6/7 为安全审查 R1 §4.4 的 P1 增补，spec §0 与本节逐字一致。）
 
 ## 10. 与公开基线的对比声明（待 full 后填充）
 
 - 只引用**可查证**文献/榜单数字（论文或官方仓库公布值），并逐条注明设置差异：模型与版本、观察空间（文本/截图）、动作空间、`episode_max_time`、任务实例数与 seed 口径、以及本基准为「自然语言任务 → Gherkin → 语义化执行」而非端到端 RL/IR 策略。
-- 本基准为单 seed 单次、无多 instance 均值，**不得**与官方多实例均值直接等价比较；披露时须并排列出设置差异表。
+- 本基准为单 seed 单次、无多 instance 均值，**不得**与官方多 instance 均值直接等价比较；披露时须并排列出设置差异表。
 - 禁止在本报告中出现未注明出处的数字；pilot/full 数字回填时同步补全本节的引用与差异声明（由总编排执行）。
+
+## 11. 安全加固补记（R1 §4 P0/P1；H1 + H2 + H3 + 披露）
+
+> 依据：`dev_docs/benchmark/security-review-r1-pre.md` §4（加固实施清单）+ §2.V1-V6（实证）。范围：`record2gherkin/benchmark/`、`tests/record2gherkin/benchmark/`、`dev_docs/benchmark/`；**未触碰 `testzeus_hercules/`**，未做 git 操作，未跑真 LLM。
+> 加固期间 pilot 仍在运行（端口 8462 的内存旧代码）：未 kill、未占用、未改动其任何产物；本补记的全部实测都用**独立临时端口**（49615/49699 等）+ 临时 rewards 文件。pilot 于 15:44Z 自然结束（manifest：11 次 Hercules 执行 = 10 + 1 重试，overall 8/10），全程未受本次加固干扰。
+
+### 11.1 改动清单
+
+| 项 | 文件 | 内容 |
+|---|---|---|
+| H1 | `record2gherkin/benchmark/miniwob_server.py` | 补丁 A 的 `core.startEpisodeReal()` 成功后追加四行加固（`#reward-display` → `display:none`；`core.updateDisplay = function () {}`；`core.startEpisode = function () {}`），仍在 `__R2G_PATCH_START__`…`__R2G_PATCH_END__` 内、纯追加；`#query` 指令区不动；用 `display:none` 而非 `remove()`（`endEpisode` 仍要写 `#episode-id`，移除会抛 `TypeError`） |
+| H2 | `record2gherkin/benchmark/orchestrator.py` | `CellScan` + `scan_cell_log()`：① 任务 URL 导航次数 → `task_url_navigations`，`>1` → `flagged`；② 日志含 `file://` → `flagged` + `invalid_reason="file_url_navigation"`（cell 无效 + 安全事件日志行）；③ 沙箱**调用**标记 → `flagged` + `invalid_reason="sandbox_tool_invoked"` |
+| H3 | 同上 | `scan_cell_rewards()`：核对 `rewards.jsonl` 中该 `(path, seed)` 落在本 attempt 窗口内的行数（`> max(navigations, 1)` → flagged）、`reason` 域、`done`/`raw` 自洽性 |
+| 接线 | 同上 | `_execute_cell` 在 `fetch_reward` 之后调用 `_scan_cell`，三键写入结果行（`build_result_row` 新增三个带默认值的关键字参数）；`metrics.ROW_KEYS` 同步（§7.1 键集合断言不破） |
+| 测试 | `tests/record2gherkin/benchmark/{test_server_patch,test_browser_miniwob,test_orchestrator}.py` | B7 加固行断言（位置 + 不移除节点）、D16(d) 两例真浏览器断言、F24/F25 扫描断言（含 `_execute_cell` 集成与重试窗口） |
+| 披露 | `dev_docs/benchmark/spec.md` | §0 新增口径 5/6/7（三条基准限制）；§3.2 补丁 A 逐字文本与行为要点同步加固；§7.1 schema 增三键；新增 §7.6 扫描判定表；§9 增 7b/D16(d)/E19/F24/F25；§10 增验收第 8 条 |
+
+结果行新增三键（`task_url_navigations:int` / `flagged:bool` / `invalid_reason:null|str`）**不参与任何判定与分母**：`status`/`official_passed` 只由官方奖励决定（口径 4）。语义分级：`flagged=true, invalid_reason=null` = 披露但保留（V4 重导航、V3 记录异常）；`invalid_reason` 非空 = cell 判为无效（V5/V6 安全事件），行仍照录、统计不剔除，由报告逐行披露。
+
+### 11.2 实测复核（验收红线逐条）
+
+| 红线 | 结果 |
+|---|---|
+| `uv run pytest tests/record2gherkin/benchmark -q` | **75 passed**（23.7s） |
+| `uv run pytest tests/record2gherkin -q` | **367 passed**（48.8s；加固前 360，本模块新增 7 个用例，全局无回归） |
+| 格式化 | `isort` + `black -l 200` 复跑 `--check` 零差异（只覆盖 benchmark 两目录；vendored 资产未被触碰） |
+| `KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" dev_runs record2gherkin tests dev_docs` | **零命中**；8 字符前/后缀同样零命中 |
+| H1 独立端口复核（端口 49615/49699，临时 rewards；click-test / enter-text / login-user 三页，成功 + 失败两条路径） | **HUD 零命中**：回合内与 `endEpisode` 后 `body.innerText` 均不含 `reward/START/Time left/Episodes done/Last 10 average`；`#reward-display`、`#sync-task-cover` 均 `display:none`、`is_visible=false`；`#reward-last` 文本仍为模板初值 `"-"`（终局不回写） |
+| 同上：奖励 POST 完好 | 三页各 2 条记录（成功 `raw=1` + 失败 `raw=0`，均 `done=true, reason=""`）经 `/latest` 200 取回并落 `rewards.jsonl`；预读前后记录数 6 → 6（预读不产生记录） |
+| 同上：START 重开路径关闭 | 失败终局后覆盖层仍 `display:none`；`page.click("#sync-task-cover", timeout=1200)` → `TimeoutError`（普通 DOM 点击不可达）；`core.getUtterance()` 与终局前**恒等**（实例未重开）；`WOB_EPISODE_ID=1` |
+| 同上：utterance 预读不变 | 加固后伺服（独立端口）重读 4 个 pilot cell 的 goal，与 pilot `results.jsonl` 记录值**逐字节相同**（click-test / enter-text / login-user / use-autocomplete，4/4 match） |
+| H2/H3 对 pilot 真实日志的复核（零误报检查） | 10 个 run 目录（11 行结果：`email-inbox-forward-nl` 有一次基础设施重试，重试复用同一 run 目录）的 `stdout.log` 全量扫描：`file://` 零命中、沙箱调用标记零命中（工具**注册**行不误判）、导航计数 = click-button 2 / enter-password 2 / login-user 2 / use-autocomplete 3 / email-inbox-forward-nl 6 / 其余各 1（与 R1 §2.V4 的 pilot 取证同序；email-inbox 从报告时的 4 增至 6，因该 cell 此后又跑了一轮重试）→ 5 个 cell（对应 6 行，`email-inbox-forward-nl` 有 1 行重试）命中 `>1` 而 `flagged`，与 R1 §3 的名单一致；`rewards.jsonl` 12 条记录（8 条 `reason=""` + 4 条 `"timed out"`）全部在合法域内、`done=true`、`raw` 为数字 → 无一行被误判为安全事件 |
+
+H1 加固后的 agent 文本视角实录（`document.body.innerText`，端口 49699）：
+
+```
+click-test  回合内/终局后均: "Click the button.\nClick Me!"            ← 只剩 goal + 控件，HUD/START 消失
+login-user  回合内/终局后均: "Enter the username \"tora\" and the password \"4Qn\" into the text fields and press login.\n\nUsername\n\nPassword\n\nLogin"
+```
+
+（对照 R1 §2.V1 加固前实录：回合内 `Last reward: - / Last 10 average: - / Time left: 240 / Episodes done: 0`，`endEpisode(1)` 后 `Last reward: 1.00 / Last 10 average: 1.00`。）
+
+### 11.3 与审查报告字面口径的两处必要偏差（均已回写 spec §7.6）
+
+1. **沙箱调用标记的字符串**：报告写 `Executing execute_python_sandbox`，但产品代码里真实打印的**调用**标记是 `Executing Python sandbox: file=…`（`execute_python_sandbox.py:62`）与 `Using sandbox tenant: …`（:70）；`execute_python_sandbox` 只出现在**注册**日志（`[TOOL_DEBUG] Processing tool 'execute_python_sandbox'` / `Registered tool: execute_python_sandbox`），**每个 run 都有**。若按报告字面实现会对 100% 的 cell 误报，故实现用真实调用标记，并在 `orchestrator.SANDBOX_CALL_MARKERS` 注释与 spec §7.6 写明理由；单测含"只有注册行 → 不 flag"的反例断言。
+2. **`reason` 合法域**：报告给的是 `{"", "timed out"}`；复核 vendored 树发现 `miniwob/unicode-test.html:53,55` 是**唯一**传第三个参数的任务页（成功 `'Cool!'`、失败 `'You clicked on <x> when you should have clicked on <y>'`，其余 129 页都不传）。若按 `{"", "timed out"}` 实现，full 中 `unicode-test` 的合法行会被误判，故合法域 = `{"", "timed out", "Cool!"}` ∪ 前缀 `"You clicked on "`，并在 spec §7.6 注明出处。
+
+另有两条实现口径（同样回写 spec §7.6）：H3 只统计 `received_at` 落在本 attempt 窗口内的记录（基础设施重试复用同一 `(path, seed)`，按整文件计数会把每个重试 cell 误判）；H3 的行数规则是**披露启发式而非不变量**——reward hook 对每次 `core.endEpisode` 调用都 POST，终局后仍被调用的任务可以合法地为一次加载追加记录。pilot 取证：12 条已记录 POST 的 `reason` 全在合法域内、`done=true`、`raw` 为数字，且每个 cell 的记录数都不超过其页面加载数（10 个 cell 中 9 个恰为 1 条）。
+
+### 11.4 对 pilot 数据与 full 的影响（披露，不改判）
+
+- **pilot 已完成的行不含三键**（旧代码、内存中进程所写）：pilot 的 `results.jsonl` 行没有 `task_url_navigations`/`flagged`/`invalid_reason`，读者须用 `.get()` 容错读取；full 阶段（新代码）行才带三键。pilot 的 V4 事实（5/9 已完成 run 存在同 URL 重复导航）由 R1 §3 披露，本节不重复改判。
+- **P1-5 上游产品建议只记录不实施**（超出本次范围、且按约定不动 `testzeus_hercules/`）：`open_url` 增加 scheme 白名单（仅 http/https，根除 V5）；`execute_python_sandbox` 增加环境开关（如 `SANDBOX_DISABLED=1` 直接拒执行）并由 orchestrator 经 `run_feature(extra_env=...)` 注入（根除 V6）。V6 的机制性结论（restricted 档非安全边界）未变，只能靠 H2③ 检测 + 披露。
+- full 报告需按口径 5/6/7 逐行披露 `flagged`/`invalid_reason` 的计数与名单（含 pilot 的 V4 计数），并说明本节的两处字面偏差。
+
