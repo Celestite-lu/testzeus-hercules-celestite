@@ -42,6 +42,12 @@ LLM_MODEL_NAME = "deepseek-v4-pro"
 LLM_MODEL_BASE_URL = "https://api.deepseek.com"
 LLM_MODEL_API_TYPE = "openai"
 
+#: r2 GLM（智谱 coding plan）provider。``KEY`` 绝不进代码/日志/manifest；``BASE_URL``/``MODEL``
+#: 非机密，作为代码常量（GLM-Key.txt 里同名 KV 仅是人工参考，运行时不读取其 MODEL/BASE_URL）。
+GLM_KEY_PATH = REPO_ROOT / "GLM-Key.txt"
+GLM_MODEL_NAME = "glm-5.3-flash"
+GLM_MODEL_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
+
 STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
 STATUS_TIMEOUT = "timeout"
@@ -70,6 +76,36 @@ class RunnerError(RuntimeError):
 
 class JUnitParseError(ValueError):
     """Raised when a JUnit XML artefact cannot be parsed or carries no testcase (spec §4.2)."""
+
+
+@dataclass(frozen=True)
+class LLMProviderConfig:
+    """One benchmark LLM provider: its key file, model name and OpenAI-compatible endpoint."""
+
+    name: str
+    key_path: Path
+    model: str
+    base_url: str
+
+
+#: 现状 provider（deepseek）：§4.3 常量原样打包，默认路径行为逐字节不变。
+DEEPSEEK = LLMProviderConfig(name="deepseek", key_path=LLM_KEY_PATH, model=LLM_MODEL_NAME, base_url=LLM_MODEL_BASE_URL)
+#: r2 实验 provider（glm）：GLM-Key.txt（KV 三行，KEY 绝不外泄）+ coding plan 端点 + flash 档模型。
+GLM = LLMProviderConfig(name="glm", key_path=GLM_KEY_PATH, model=GLM_MODEL_NAME, base_url=GLM_MODEL_BASE_URL)
+
+PROVIDERS: Mapping[str, LLMProviderConfig] = {"deepseek": DEEPSEEK, "glm": GLM}
+
+
+def resolve_provider(provider: str | LLMProviderConfig | None = None) -> LLMProviderConfig:
+    """``None``/``"deepseek"`` → 现状 deepseek 配置；``"glm"`` → GLM 配置；非法名 → :class:`RunnerError`。"""
+    if provider is None:
+        return DEEPSEEK
+    if isinstance(provider, LLMProviderConfig):
+        return provider
+    key = str(provider).strip().lower()
+    if key not in PROVIDERS:
+        raise RunnerError(f"unknown LLM provider: {provider!r} (expected one of {sorted(PROVIDERS)})")
+    return PROVIDERS[key]
 
 
 @dataclass(frozen=True)
@@ -112,12 +148,28 @@ class RunResult:
 
 
 def read_api_key(path: Path | None = None) -> str:
-    """Read the LLM key from ``LLM-Key.txt`` (single line; ``strip()`` is the key)."""
+    """Read the LLM key from the key file.
+
+    两种格式：单行文件（``strip()`` 即 key，历史行为逐字节保留）或 KV 格式（GLM-Key.txt：含
+    ``#`` 注释行与 ``KEY=``/``BASE_URL=``/``MODEL=`` 三行）。文件里出现 ``KEY=`` 行时按 KV 解析、
+    忽略注释与空行；``KEY=`` 为空视为不可用的凭据文件。MODEL/BASE_URL 行被忽略（model/base_url
+    来自 provider 常量），缺 MODEL 不影响 key 读取。
+    """
     key_path = Path(path) if path is not None else LLM_KEY_PATH
     try:
-        return key_path.read_text(encoding="utf-8").strip()
+        text = key_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise RunnerError(f"cannot read LLM key from {key_path}: {exc}") from exc
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("KEY="):
+            value = stripped.split("=", 1)[1].strip()
+            if not value:
+                raise RunnerError(f"empty KEY= value in {key_path}")
+            return value
+    return text.strip()
 
 
 def mask_secret(text: str, secret: str) -> str:
@@ -137,18 +189,20 @@ def mask_secret(text: str, secret: str) -> str:
     return masked
 
 
-def build_child_env(api_key: str) -> dict[str, str]:
+def build_child_env(api_key: str, *, model: str | None = None, base_url: str | None = None) -> dict[str, str]:
     """Child environment for the Hercules sub-process (spec §4.3): ``os.environ`` plus LLM plumbing.
 
-    The key travels only here — never in ``argv``, never in a written artefact.
+    The key travels only here — never in ``argv``, never in a written artefact.  ``model``/``base_url``
+    override the deepseek defaults (provider plumbing, r2); ``LLM_MODEL_API_TYPE`` stays ``openai``
+    for every provider (all endpoints are OpenAI-compatible).
     """
     if not (api_key or "").strip():
         raise RunnerError("empty API key: nothing to inject")
     env = dict(os.environ)
     env.update(
         {
-            "LLM_MODEL_NAME": LLM_MODEL_NAME,
-            "LLM_MODEL_BASE_URL": LLM_MODEL_BASE_URL,
+            "LLM_MODEL_NAME": model if model is not None else LLM_MODEL_NAME,
+            "LLM_MODEL_BASE_URL": base_url if base_url is not None else LLM_MODEL_BASE_URL,
             "LLM_MODEL_API_TYPE": LLM_MODEL_API_TYPE,
             "LLM_MODEL_API_KEY": api_key.strip(),
             "ENABLE_TELEMETRY": "0",  # config import initialises Sentry otherwise (telemetry.py:20,65)
@@ -219,13 +273,18 @@ def prepare_run_dir(project_root: Path) -> Path:
     return project
 
 
-def build_run_plan(feature_path: Path, project_root: Path, *, api_key: str | None = None) -> RunPlan:
-    """Assemble cmd/cwd/env for one run without executing anything (``--dry-run`` path)."""
+def build_run_plan(feature_path: Path, project_root: Path, *, api_key: str | None = None, provider: str | LLMProviderConfig | None = None) -> RunPlan:
+    """Assemble cmd/cwd/env for one run without executing anything (``--dry-run`` path).
+
+    ``provider`` selects the key file + model + endpoint (``None`` = deepseek 现状，逐字节不变);
+    the key is read from the provider's own key file unless ``api_key`` is given explicitly.
+    """
+    config = resolve_provider(provider)
     feature = Path(feature_path).resolve()
     if not feature.is_file():
         raise RunnerError(f"feature file not found: {feature}")
     project = prepare_run_dir(project_root)
-    key = read_api_key() if api_key is None else api_key
+    key = read_api_key(config.key_path) if api_key is None else api_key
     return RunPlan(
         feature_path=feature,
         project_root=project,
@@ -234,7 +293,7 @@ def build_run_plan(feature_path: Path, project_root: Path, *, api_key: str | Non
         junit_path=junit_path_for(feature, project),
         cmd=build_command(feature, project),
         cwd=REPO_ROOT,
-        env=build_child_env(key),
+        env=build_child_env(key, model=config.model, base_url=config.base_url),
     )
 
 
@@ -251,6 +310,7 @@ def run_feature(
     extra_env: Mapping[str, str] | None = None,
     timeout_s: int = DEFAULT_TIMEOUT_S,
     api_key: str | None = None,
+    provider: str | LLMProviderConfig | None = None,
     dry_run: bool = False,
     stdout_log_path: Path | None = None,
 ) -> RunResult:
@@ -262,8 +322,9 @@ def run_feature(
     ``stdout_log_path`` (spec-r2 §2.1, C1d) redirects the masked child log — the orchestrator passes
     ``runs/<run_id>/attempt<N>/stdout.log`` so a retry never overwrites the previous attempt's
     evidence; ``None`` keeps the historical default ``<run_dir>/stdout.log`` byte-for-byte.
+    ``provider`` (r2) selects key file/model/endpoint; ``None`` keeps the deepseek default.
     """
-    plan = build_run_plan(feature_path, project_root, api_key=api_key)
+    plan = build_run_plan(feature_path, project_root, api_key=api_key, provider=provider)
     env = dict(plan.env)
     if extra_env:
         env.update({str(name): str(value) for name, value in extra_env.items()})

@@ -20,7 +20,11 @@ from dataclasses import dataclass
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from record2gherkin.evaluation.runner import mask_secret
+from record2gherkin.evaluation.runner import (
+    LLMProviderConfig,
+    mask_secret,
+    resolve_provider,
+)
 
 __all__ = ["ProbeResult", "probe_llm"]
 
@@ -33,13 +37,18 @@ class ProbeResult:
     detail: str
 
 
-def probe_llm(*, api_key: str, model: str, base_url: str, timeout_s: float = 30.0) -> ProbeResult:
+def probe_llm(*, api_key: str, model: str | None = None, base_url: str | None = None, provider: str | LLMProviderConfig | None = None, timeout_s: float = 30.0) -> ProbeResult:
     """One minimal (``max_tokens=1``) chat call over the engine's own transport (spec-r2 §3.1).
 
-    Any exception — auth, balance, connection, timeout — becomes ``ok=False`` with the masked
-    exception text; success returns ``ok=True``.  The probe never retries (``max_retries=0``) and
-    never writes anything.
+    Provider-aware (r2): ``model``/``base_url`` default to the resolved provider's constants
+    (``None`` = deepseek 现状); explicit values (e.g. a routed nav model) win over the provider
+    defaults.  Any exception — auth, balance, connection, timeout — becomes ``ok=False`` with the
+    masked exception text; success returns ``ok=True``.  The probe never retries (``max_retries=0``)
+    and never writes anything.
     """
+    config = resolve_provider(provider)
+    model = model or config.model
+    base_url = base_url or config.base_url
     try:
         ChatOpenAI(
             model=model,

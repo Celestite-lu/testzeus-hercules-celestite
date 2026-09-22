@@ -33,6 +33,11 @@ r2 operations (all flag-gated, default off; C1a/C1b/C1c/C1d are always on):
 * ``--latency-env`` / ``--extra-tools`` / ``--template-notes`` / ``--smoke-cells`` — engine env
   pack, extra tool gate, Gherkin template notes and the pilot drag-smoke appendix.
   All switches are recorded in the manifest ``flags`` object.
+* ``--provider {deepseek,glm}`` (r2) — LLM provider of the experiment (default ``deepseek`` keeps
+  the r1 status quo byte-for-byte).  ``glm`` reads ``GLM-Key.txt`` (KV format, key travels through
+  env only), rides the coding-plan endpoint with ``glm-5.3-flash`` and defaults the routed nav
+  model to ``glm-5.3-flash`` / the planner to ``glm-5.3``; a non-default provider adds
+  ``llm_provider`` + ``model`` to the manifest for 口径披露.
 """
 
 from __future__ import annotations
@@ -117,6 +122,9 @@ ROLE_ROUTING_REF_KEY = "litellm"
 ROLE_ROUTING_PLANNER_MODEL = runner_module.LLM_MODEL_NAME
 ROLE_ROUTING_HELPER_MODEL = runner_module.LLM_MODEL_NAME
 DEFAULT_NAV_MODEL = "deepseek-flash"
+#: r2 ``--provider glm``: the GLM coding-plan routing defaults — nav rides the flash tier (the
+#: provider's own model) while the planner keeps the flagship model.
+GLM_PLANNER_MODEL = "glm-5.3"
 AGENTS_LLM_CONFIG_FILENAME = "agents_llm_config.json"
 
 
@@ -729,11 +737,12 @@ class Orchestrator:
         terminal_cue: bool = False,
         single_start: bool = False,
         role_routing: bool = False,
-        nav_model: str = DEFAULT_NAV_MODEL,
+        nav_model: str | None = None,
         extra_tools: bool = False,
         template_notes: bool = False,
         latency_env: bool = False,
         smoke_cells: Sequence[str] = (),
+        provider: str | runner_module.LLMProviderConfig | None = None,
     ) -> None:
         if stage not in tasks_module.STAGES:
             raise BenchmarkError(f"unknown stage: {stage!r} (expected one of {tasks_module.STAGES})")
@@ -744,6 +753,17 @@ class Orchestrator:
             raise BenchmarkError(f"duplicate --smoke-cells entries: {smoke}")
         self.exp_id = exp_id
         self.stage = stage
+        #: r2: LLM provider of this experiment (``None`` = deepseek 现状).  Drives the key file, the
+        #: child-env model/base_url, the C1c preflight target and the C5 routing defaults.
+        self.provider = runner_module.resolve_provider(provider)
+        if self.provider is runner_module.DEEPSEEK:
+            self.planner_model = ROLE_ROUTING_PLANNER_MODEL
+            self.helper_model = ROLE_ROUTING_HELPER_MODEL
+            nav_model_default = DEFAULT_NAV_MODEL
+        else:  # glm (r2): planner keeps the flagship model, nav/helper ride the provider's flash tier
+            self.planner_model = GLM_PLANNER_MODEL
+            self.helper_model = self.provider.model
+            nav_model_default = self.provider.model
         self.exp_dir = Path(exp_root) / exp_id
         self.runs_dir = self.exp_dir / "runs"
         self.features_dir = self.exp_dir / "features"
@@ -761,7 +781,7 @@ class Orchestrator:
         self.terminal_cue = bool(terminal_cue)
         self.single_start = bool(single_start)
         self.role_routing = bool(role_routing)
-        self.nav_model = str(nav_model)
+        self.nav_model = str(nav_model).strip() if nav_model and str(nav_model).strip() else nav_model_default
         self.extra_tools = bool(extra_tools)
         self.template_notes = bool(template_notes)
         self.latency_env = bool(latency_env)
@@ -832,15 +852,15 @@ class Orchestrator:
     def _run_preflight(self) -> int:
         """Probe every model this run will use; exit 3 (masked reason) when any probe fails."""
         try:
-            key = runner_module.read_api_key()
+            key = runner_module.read_api_key(self.provider.key_path)
         except runner_module.RunnerError as exc:
             logger.error("preflight failed: %s — 请充值或更换可用 key 后重试", exc)
             return 3
-        models = [runner_module.LLM_MODEL_NAME]
+        models = [self.provider.model]
         if self.role_routing and self.nav_model not in models:
             models.append(self.nav_model)
         for model in models:
-            result = preflight_module.probe_llm(api_key=key, model=model, base_url=runner_module.LLM_MODEL_BASE_URL)
+            result = preflight_module.probe_llm(api_key=key, model=model, base_url=self.provider.base_url)
             if not result.ok:
                 logger.error("preflight failed for model %s: %s — 请充值或更换可用 key 后重试", model, result.detail)
                 return 3
@@ -849,7 +869,13 @@ class Orchestrator:
 
     def _prepare_role_routing(self) -> Path:
         """Generate ``<exp_dir>/agents_llm_config.json`` (no key inside; spec-r2 §6.1)."""
-        config = build_agents_llm_config(nav_model=self.nav_model, base_url=runner_module.LLM_MODEL_BASE_URL, api_type=runner_module.LLM_MODEL_API_TYPE)
+        config = build_agents_llm_config(
+            nav_model=self.nav_model,
+            base_url=self.provider.base_url,
+            api_type=runner_module.LLM_MODEL_API_TYPE,
+            planner_model=self.planner_model,
+            helper_model=self.helper_model,
+        )
         return write_agents_llm_config(self.exp_dir / AGENTS_LLM_CONFIG_FILENAME, config)
 
     def _child_extra_env(self) -> dict[str, str]:
@@ -860,7 +886,7 @@ class Orchestrator:
         if self.extra_tools:
             extra["LOAD_EXTRA_TOOLS"] = "true"
         if self.role_routing and self._routing_config_path is not None:
-            extra.update(role_routing_env(self._routing_config_path, runner_module.read_api_key()))
+            extra.update(role_routing_env(self._routing_config_path, runner_module.read_api_key(self.provider.key_path)))
         return extra
 
     # -- plan / resume -----------------------------------------------------------------------
@@ -953,7 +979,7 @@ class Orchestrator:
                 cost_usd=None,
                 started_at=started_at,
                 finished_at=_now(),
-                model=runner_module.LLM_MODEL_NAME,
+                model=self.provider.model,
                 attempt=self._attempt_no(cell),
             )
             self._append_row(row)
@@ -1001,6 +1027,7 @@ class Orchestrator:
             timeout_s=self.timeout_s,
             extra_env=self._child_extra_env() or None,
             stdout_log_path=attempt_log_path,
+            provider=self.provider,
         )
         junit_passed, junit_terminate = _junit_verdict(result)
         reward = fetch_reward(self.base_url, task=cell.subdomain, seed=cell.seed)
@@ -1025,7 +1052,7 @@ class Orchestrator:
             cost_usd=result.cost_usd,
             started_at=started_at,
             finished_at=finished_at,
-            model=runner_module.LLM_MODEL_NAME,
+            model=self.provider.model,
             task_url_navigations=scan.task_url_navigations,
             flagged=scan.flagged,
             invalid_reason=scan.invalid_reason,
@@ -1161,13 +1188,13 @@ class Orchestrator:
     def _write_manifest(self) -> None:
         rows = metrics_module.load_rows(self.results_path) if self.results_path.is_file() else []
         summary = metrics_module.summarize(rows, tasks=self.stage_tasks, exp_id=self.exp_id)
-        manifest = {
+        manifest: dict[str, Any] = {
             "exp_id": self.exp_id,
             "git_rev": git_rev(),
             "started_at": self.started_at,
             "stage": self.stage,
-            "model_name": runner_module.LLM_MODEL_NAME,
-            "llm_base_url": runner_module.LLM_MODEL_BASE_URL,
+            "model_name": self.provider.model,
+            "llm_base_url": self.provider.base_url,
             "server_port": self.port,
             "episode_max_time_ms": self.episode_ms,
             "timeout_s": self.timeout_s,
@@ -1183,6 +1210,11 @@ class Orchestrator:
             "metrics": summary.as_dict(),
             "finished_at": _now(),
         }
+        if self.provider is not runner_module.DEEPSEEK:
+            # 口径披露（r2）：非默认 provider 时 manifest 追加 provider 名与实际模型；deepseek 现状
+            # 的 manifest 逐字节不变（model_name/llm_base_url 已隐含披露）。
+            manifest["llm_provider"] = self.provider.name
+            manifest["model"] = self.provider.model
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         logger.info("orchestrator: manifest written to %s", self.manifest_path)
@@ -1217,7 +1249,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--terminal-cue", action="store_true", help="C2: serve core.js with the neutral EPISODE ENDED terminal cue")
     parser.add_argument("--single-start", action="store_true", help="C3: auto-start the episode at most once per tab")
     parser.add_argument("--role-routing", action="store_true", help="C5: per-role model routing (generates agents_llm_config.json, key stays in env)")
-    parser.add_argument("--nav-model", default=DEFAULT_NAV_MODEL, help="C5: the routed nav/executor model name (probed by the C1c preflight)")
+    parser.add_argument("--nav-model", default=None, help="C5: the routed nav/executor model name (default: deepseek-flash for deepseek, glm-5.3-flash for glm; probed by the C1c preflight)")
+    parser.add_argument(
+        "--provider",
+        default="deepseek",
+        choices=sorted(runner_module.PROVIDERS),
+        help="r2: LLM provider of this experiment (default deepseek keeps the r1 status quo; glm reads GLM-Key.txt and rides the coding-plan endpoint)",
+    )
     parser.add_argument("--extra-tools", action="store_true", help="C6: load extra_tools in the child (drag_and_drop etc., LOAD_EXTRA_TOOLS=true)")
     parser.add_argument("--template-notes", action="store_true", help="C7: append the fixed context notes block to the generated feature")
     parser.add_argument("--latency-env", action="store_true", help="C4f: inject the latency pack env (timeout/retries/refresh mode/round cap/step budget)")
@@ -1244,6 +1282,7 @@ def main(argv: list[str] | None = None) -> int:
             template_notes=args.template_notes,
             latency_env=args.latency_env,
             smoke_cells=[cell for cell in args.smoke_cells.split(",") if cell.strip()],
+            provider=args.provider,
         )
         return orchestrator.run()
     except (BenchmarkError, tasks_module.BenchmarkError, runner_module.RunnerError) as exc:

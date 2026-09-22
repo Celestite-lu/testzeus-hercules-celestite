@@ -309,3 +309,27 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-r2 --sta
 ### 12.7 脱敏红线复核
 
 `KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" record2gherkin tests dev_docs` 零命中；T7 断言生成的 `agents_llm_config.json` 无 `model_api_key`/`sk-`（写盘函数对含 key 配置直接抛 `BenchmarkError`）；T4 断言预检失败日志含脱敏原因与"充值"提示且不含 key 实值。
+
+## 13. r2 补记：GLM（智谱 coding plan）实验 provider 集成（2026-09-22）
+
+为 r2 实验链路新增 `--provider {deepseek,glm}`（默认 `deepseek`，现状路径逐字节不变）。用户决定 r2 实验用 **glm-5.3-flash** 跑。
+
+### 13.1 改动范围
+
+- `record2gherkin/evaluation/runner.py`：新增 `LLMProviderConfig`（name/key_path/model/base_url）与 `DEEPSEEK`（现状 §4.3 常量原样打包）/`GLM`（`GLM-Key.txt` / `glm-5.3-flash` / `https://open.bigmodel.cn/api/coding/paas/v4`）实例及 `resolve_provider`（非法名 → `RunnerError`）；`read_api_key` 支持两格式——文件含 `KEY=` 行时按 KV 解析（忽略 `#` 注释与空行，空 `KEY=` 明确报错），否则维持单行 `strip()` 历史行为；`build_child_env(api_key, *, model=None, base_url=None)` 可选覆盖默认常量（`LLM_MODEL_API_TYPE` 恒 `openai`，GLM 端点同为 OpenAI 兼容）；`build_run_plan` / `run_feature` 新增可选 `provider` 参数（`None` = deepseek 现状），key 从 provider 自带 key 路径读取。
+- `record2gherkin/benchmark/orchestrator.py`：CLI 新增 `--provider`（默认 deepseek）、`--nav-model` 默认改为 None（按 provider 解析：deepseek → `deepseek-flash`，glm → `glm-5.3-flash`）；GLM 时 C5 路由 planner 默认 `glm-5.3`（`GLM_PLANNER_MODEL`）、helper 走 provider flash 档；key 读取/child env/结果行 `model`/C1c 预检端点全部走 provider 配置；manifest 在**非默认 provider** 时追加 `llm_provider` 与 `model` 两个披露字段（deepseek 现状 manifest 键集逐字节不变，见 13.3）。
+- `record2gherkin/benchmark/preflight.py`：`probe_llm` 增加可选 `provider` 参数（model/base_url 缺省时取 provider 常量；显式传入优先），编排侧仍显式传 `base_url=`（既有 spy 断言零修改）。
+- 测试：`tests/record2gherkin/evaluation/test_llm_provider.py`（9 条：KV 解析含注释行/缺 MODEL 回退/空 KEY 报错/单行向后兼容、resolve_provider 非法名、build_child_env 覆盖、默认 env 零变化、glm dry-run env 四键、provider 自带 tmp key 文件）+ `tests/record2gherkin/benchmark/test_provider_routing.py`（9 条：glm 路由默认、默认 provider 现状、C5 glm 配置无 key、C1c glm 端点/模型探测、probe_llm provider 参数、manifest 披露与默认键集不变、cell 透传、CLI glm dry-run、非法 provider 拒绝）。
+
+### 13.2 验证证据
+
+- `uv run pytest tests/record2gherkin -q` → **427 passed**（基线 409 + 新增 18，既有测试零修改全绿）。
+- `--provider glm` dry-run 实测（`python -m record2gherkin.benchmark.orchestrator --exp-id glm-smoke-check --stage pilot --dry-run --provider glm`）：exit 0，打印 10 cell 计划 + `budget {"breakdown": {"pilot": 10}, "cap": 144, "retry": 2, "total": 12}`，不写任何文件。
+- glm child env 实测（假 key，脱敏）：`LLM_MODEL_NAME=glm-5.3-flash`、`LLM_MODEL_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4`、`LLM_MODEL_API_TYPE=openai`、`LLM_MODEL_API_KEY=***REDACTED***`；默认（不传 provider）仍为 `deepseek-v4-pro` / `https://api.deepseek.com`。
+- 脱敏复核：`grep -rl -- "$(grep -E '^KEY=' GLM-Key.txt | cut -d= -f2)" record2gherkin tests/record2gherkin dev_docs/benchmark` 零命中；测试全部使用 tmp 假 key 文件/假 key，从不读取真实 `GLM-Key.txt` 内容。
+
+### 13.3 实现口径（3 条，均不阻塞核心目标）
+
+1. **manifest 新字段为条件披露**：`llm_provider`/`model` 仅在非默认 provider 时写入——若无条件追加，deepseek 现状 manifest 键集变化将违反"默认路径逐字节一致 + 现有测试零修改"红线（`test_f23` 断言精确键集）；deepseek 的口径已由既有 `model_name`/`llm_base_url` 隐含披露。
+2. **"缺 MODEL 回退"的实现位置**：`read_api_key` 只消费 `KEY=`（字段无关解析，缺 `MODEL=`/`BASE_URL=` 行不影响 key 读取）；运行时 model/base_url 恒取 provider 代码常量（glm-5.3-flash / coding 端点），`GLM-Key.txt` 中的 `MODEL=`/`BASE_URL=` 行为人工参考、运行时不读取——改模型需改代码常量，避免 key 文件内容漂移影响实验口径。
+3. **evaluation/sweep.py 未 provider 化**（Out of Scope）：sweep 仍固定 deepseek 常量；r2 实验走 benchmark orchestrator 链路，不经过 sweep。
