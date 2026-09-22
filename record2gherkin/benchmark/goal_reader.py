@@ -23,7 +23,7 @@ TASK_READY_TIMEOUT_MS = 15000
 UTTERANCE_TIMEOUT_MS = 10000
 
 TASK_READY_CONDITION = "() => window.WOB_TASK_READY === true"
-UTTERANCE_CONDITION = "() => typeof core !== 'undefined' && !!core.getUtterance()"
+UTTERANCE_CONDITION = "() => { try { const u = core.getUtterance(); if (!u) return false; if (typeof u === 'string') return u.trim().length > 0; if (typeof u.utterance === 'string') return u.utterance.trim().length > 0; return false; } catch (e) { return false; } }"
 UTTERANCE_EXPRESSION = "core.getUtterance()"
 START_ERROR_EXPRESSION = "() => window.__R2G_START_ERROR || null"
 
