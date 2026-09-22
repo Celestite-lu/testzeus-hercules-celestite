@@ -242,3 +242,181 @@ def test_d16d_hardening_closes_the_start_reroll_path(started_page: Any) -> None:
     # 实例未被重开：同 seed 下重开会推进 RNG（utterance 改变），这里必须恒等
     assert started_page.evaluate("() => core.getUtterance()") == utterance_before
     assert started_page.evaluate("() => window.WOB_EPISODE_ID") == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# r2 T5：终局信号 --terminal-cue（spec-r2 §4.3）+ T6：单次开局 --single-start（spec-r2 §4.2）
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def cue_server(html_root: Path, tmp_path: Path) -> Iterator[MiniWobServer]:
+    """``--terminal-cue``伺服器（C2）：默认 off 的伺服器由模块级 ``miniwob_server`` fixture 覆盖。"""
+    server = MiniWobServer(html_root, port=0, rewards_file=tmp_path / "rewards.jsonl", terminal_cue=True)
+    server.start(background=True)
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
+@pytest.fixture()
+def single_server(html_root: Path, tmp_path: Path) -> Iterator[MiniWobServer]:
+    """``--single-start``伺服器（C3）。"""
+    server = MiniWobServer(html_root, port=0, rewards_file=tmp_path / "rewards.jsonl", terminal_cue=False, single_start=True)
+    server.start(background=True)
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
+def _open_started(browser: Browser, server: MiniWobServer, *, seed: int = SEED) -> Any:
+    page = browser.new_page()
+    page.set_default_timeout(20000)
+    page.goto(goal_reader.page_url(SUBDOMAIN, port=server.port, seed=seed, episode_ms=EPISODE_MS), wait_until="load")
+    page.wait_for_function("() => window.WOB_TASK_READY === true", timeout=20000)
+    page.wait_for_function(EPISODE_READY, timeout=20000)
+    return page
+
+
+def _latest(server: MiniWobServer, *, task: str = SUBDOMAIN, seed: int = SEED) -> tuple[int, dict[str, Any]]:
+    return http_get_json(f"{server.base_url}/__r2g_reward/latest?task={task}&seed={seed}")
+
+
+def _wait_latest(server: MiniWobServer, *, seed: int = SEED) -> tuple[int, dict[str, Any]]:
+    deadline = time.monotonic() + 10
+    status, record = 404, {"error": "no_reward"}
+    while time.monotonic() < deadline:
+        status, record = _latest(server, seed=seed)
+        if status == 200:
+            break
+        time.sleep(0.1)
+    return status, record
+
+
+CUE_TEXT = "() => document.getElementById('r2g-terminal-cue').innerText"
+CUE_COUNT = "() => document.querySelectorAll('#r2g-terminal-cue').length"
+CUE_DISPLAY = "() => getComputedStyle(document.getElementById('r2g-terminal-cue')).display"
+
+
+def test_t5a_cue_is_neutral_and_constant_across_reward_values(browser: Browser, cue_server: MiniWobServer) -> None:
+    """T5(a)：endEpisode(1) 与 endEpisode(-1) 后 cue 文本恒为且仅为 ``EPISODE ENDED``（两次一致）。"""
+    page = _open_started(browser, cue_server)
+    try:
+        assert page.evaluate("() => document.getElementById('r2g-terminal-cue')") is None  # 开局时无 cue
+        for value in (1, -1, 1):
+            page.evaluate(f"() => core.endEpisode({value})")
+            time.sleep(0.2)
+            assert page.evaluate(CUE_TEXT) == "EPISODE ENDED"
+    finally:
+        page.close()
+
+
+def test_t5b_cue_is_visible_but_leaks_nothing(browser: Browser, cue_server: MiniWobServer) -> None:
+    """T5(b)：cue 可见（非 display:none、出现在 innerText）；HUD/START 加固零命中回归。"""
+    page = _open_started(browser, cue_server)
+    try:
+        page.evaluate("() => core.endEpisode(1)")
+        time.sleep(0.3)
+        assert page.evaluate(CUE_DISPLAY) != "none"
+        body = page.evaluate("() => document.body.innerText")
+        assert "EPISODE ENDED" in body
+        _assert_no_hud_leak(body)  # Last reward / Time left / Episodes done / START 零命中
+        assert "raw" not in page.evaluate(CUE_TEXT).lower()
+        assert page.evaluate("() => document.getElementById('query').innerText").strip()  # #query 不被遮内容
+    finally:
+        page.close()
+
+
+def test_t5c_cue_does_not_touch_the_reward_post(browser: Browser, cue_server: MiniWobServer, tmp_path: Path) -> None:
+    """T5(c)：cue 不改判分 —— /latest 记录与不加 cue 的伺服器逐字段一致（POST 完好、单实例单文本）。"""
+    page = _open_started(browser, cue_server)
+    try:
+        page.evaluate("() => core.endEpisode(1)")
+        status, record = _wait_latest(cue_server)
+        assert status == 200, record
+        assert record["raw"] > 0 and record["done"] is True and record["reason"] == ""
+        assert record["path"] == f"/miniwob/{SUBDOMAIN}.html" and record["seed"] == str(SEED)
+        # (d) 幂等：重复 endEpisode 仍单实例单文本，且 rewards.jsonl 每次 endEpisode 恰一行
+        page.evaluate("() => core.endEpisode(0)")
+        time.sleep(0.3)
+        assert page.evaluate(CUE_COUNT) == 1
+        assert page.evaluate(CUE_TEXT) == "EPISODE ENDED"
+        lines = read_jsonl(tmp_path / "rewards.jsonl")
+        assert len(lines) == 2  # endEpisode(1) + endEpisode(0)，每次一行（cue 不额外 POST）
+    finally:
+        page.close()
+
+
+def test_t6a_second_load_in_the_same_tab_does_not_restart(browser: Browser, single_server: MiniWobServer) -> None:
+    """T6(a)：同 tab 二次 goto → 不自动开局（ept0 不更新）、不产生新 reward 记录。"""
+    page = _open_started(browser, single_server)
+    try:
+        page.evaluate("() => core.endEpisode(1)")  # 首局终局 → 1 条记录
+        status, record = _wait_latest(single_server)
+        assert status == 200 and record["raw"] > 0
+
+        page.goto(goal_reader.page_url(SUBDOMAIN, port=single_server.port, seed=SEED, episode_ms=EPISODE_MS), wait_until="load")
+        page.wait_for_function("() => window.WOB_TASK_READY === true", timeout=20000)
+        time.sleep(1.0)  # 给任何非法自动开局留出暴露时间
+        assert page.evaluate("() => core.ept0 == null") is True  # 未开局
+        assert page.evaluate("() => window.WOB_EPISODE_ID") == 0
+        assert read_jsonl(single_server.collector.rewards_file) is not None
+        assert len(read_jsonl(single_server.collector.rewards_file)) == 1  # 无新记录
+    finally:
+        page.close()
+
+
+def test_t6e_intercepted_page_hardening_blocks_the_start_overlay(browser: Browser, single_server: MiniWobServer) -> None:
+    """T6(e)（review-r2 M2）：拦截态点击 START 覆盖层 → 无新记录、保持未开局；文本视角零命中。"""
+    page = _open_started(browser, single_server)
+    try:
+        page.evaluate("() => core.endEpisode(1)")
+        _wait_latest(single_server)
+        page.goto(goal_reader.page_url(SUBDOMAIN, port=single_server.port, seed=SEED, episode_ms=EPISODE_MS), wait_until="load")
+        page.wait_for_function("() => window.WOB_TASK_READY === true", timeout=20000)
+        time.sleep(0.5)
+
+        assert page.evaluate("() => core.ept0 == null") is True
+        assert page.evaluate("() => core.startEpisodeReal.toString()") == "function () {}"  # stub 在补丁求值期生效
+        assert page.evaluate("() => core.startEpisode.toString()") == "function () {}"
+        # 拦截态同样 V2 加固：覆盖层与 HUD 隐藏，普通 DOM 点击无法重开
+        assert page.evaluate(COVER_DISPLAY) in ("none", "missing")
+        with pytest.raises(PlaywrightTimeoutError):
+            page.click("#sync-task-cover", timeout=800)
+        time.sleep(0.5)
+        assert page.evaluate("() => core.ept0 == null") is True
+        assert len(read_jsonl(single_server.collector.rewards_file)) == 1  # 无任何新 reward 记录
+        lowered = page.evaluate("() => document.body.innerText").lower()
+        hits = [k for k in ("start", "last reward", "time left", "episodes done") if k in lowered]
+        assert not hits, hits
+    finally:
+        page.close()
+
+
+def test_t6b_goal_preread_is_unaffected_by_single_start(single_server: MiniWobServer) -> None:
+    """T6(b)：预读路径（独立 context，sessionStorage 不跨 context）不受影响 —— utterance 正常读取。
+
+    注意：本用例不得持有 ``browser`` fixture（read_goal 需要本线程独立的 sync context）。
+    """
+    first = goal_reader.read_goal(SUBDOMAIN, SEED, port=single_server.port, episode_ms=EPISODE_MS)
+    second = goal_reader.read_goal(SUBDOMAIN, SEED, port=single_server.port, episode_ms=EPISODE_MS)
+    assert first.strip() and first == second  # 同 seed 确定性
+    assert _latest(single_server)[0] == 404  # 预读不产生 reward 记录
+
+
+def test_t6c_default_server_still_restarts_on_second_load(browser: Browser, miniwob_server: MiniWobServer) -> None:
+    """T6(c)：flag off（默认伺服器）时二次 load 行为与 r1 一致 —— 自动重开局。"""
+    page = browser.new_page()
+    page.set_default_timeout(20000)
+    url = goal_reader.page_url(SUBDOMAIN, port=miniwob_server.port, seed=SEED, episode_ms=EPISODE_MS)
+    try:
+        page.goto(url, wait_until="load")
+        page.wait_for_function(EPISODE_READY, timeout=20000)
+        page.goto(url, wait_until="load")  # 同 tab 二次加载
+        page.wait_for_function(EPISODE_READY, timeout=20000)  # r1：自动重开局 → ept0 再次非空
+        assert page.evaluate("() => core.ept0 != null") is True
+        assert page.evaluate("() => window.__R2G_START_ERROR || null") is None
+    finally:
+        page.close()

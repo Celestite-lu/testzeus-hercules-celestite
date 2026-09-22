@@ -98,13 +98,48 @@ def read_goal(subdomain: str, seed: int, *, port: int, episode_ms: int, timeout_
     return goal_from_utterance(value)
 
 
-def render_feature(*, task_id: str, subdomain: str, seed: int, port: int, episode_ms: int, goal: str) -> str:
+#: spec-r2 §7.2 (C7 ``--template-notes``): fixed, task-agnostic context notes inserted as Gherkin
+#: comments before the ``Then`` line (comment lines never change the parsed document structure).
+#: The ``When`` instruction itself stays byte-identical — no task-specific hint is ever added.
+TEMPLATE_NOTES_BLOCK = (
+    "  # Notes: The instruction above is also displayed at the top of the page (#query).",
+    "  # This is a single-page task: do not reload or navigate away; all progress would be lost.",
+    "  # The page shows no success or failure message. Once you have performed the requested",
+    "  # action (including any required submit), report completion immediately.",
+)
+#: Fifth line, only when the notes are on AND the terminal cue (C2) is on — with C2 off the line
+#: would be false information about the environment and must not appear (spec-r2 §7.2, T8).
+TEMPLATE_NOTES_TERMINAL_CUE_LINE = '  # A small "EPISODE ENDED" note in the corner means this episode is over ' "(pass or fail alike): stop and report immediately."
+
+
+def render_feature(
+    *,
+    task_id: str,
+    subdomain: str,
+    seed: int,
+    port: int,
+    episode_ms: int,
+    goal: str,
+    notes: bool = False,
+    notes_terminal_cue: bool = False,
+) -> str:
     """The single feature-file shape of the benchmark (spec §5.1, verbatim template).
 
     ``goal`` is expected to be sanitized already (:func:`sanitize_goal`); ``Then`` is the planner's
     intent statement only — the official verdict comes from the page reward (spec §0 口径 4).
+    ``notes=True`` inserts the fixed comment block before ``Then`` (C7); the terminal-cue line is
+    appended only when ``notes`` and ``notes_terminal_cue`` are both true (C2 on).
     """
     url = page_url(subdomain, port=port, seed=seed, episode_ms=episode_ms)
-    return (
-        f"Feature: MiniWoB++ {task_id}\n" f"  Scenario: {subdomain} seed={seed}\n" f'    Given I am on the page "{url}"\n' f"    When {goal}\n" f"    Then the task should be completed successfully\n"
-    )
+    lines = [
+        f"Feature: MiniWoB++ {task_id}",
+        f"  Scenario: {subdomain} seed={seed}",
+        f'    Given I am on the page "{url}"',
+        f"    When {goal}",
+    ]
+    if notes:
+        lines.extend(TEMPLATE_NOTES_BLOCK)
+        if notes_terminal_cue:
+            lines.append(TEMPLATE_NOTES_TERMINAL_CUE_LINE)
+    lines.append("    Then the task should be completed successfully")
+    return "\n".join(lines) + "\n"

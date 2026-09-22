@@ -28,6 +28,10 @@ ROW_KEYS: tuple[str, ...] = (
     "goal",
     "episode_max_time_ms",
     "status",
+    # spec-r2 §1.1/§1.2: the r1-priority status the row would have carried before the C1a rescue
+    # rule ("engine timed out but the page already passed" rows become auditable: status=official_passed
+    # with runner_status=timeout/no_junit).  Disclosure only — never a metric input.
+    "runner_status",
     "official_passed",
     "reward_raw",
     "done",
@@ -47,6 +51,10 @@ ROW_KEYS: tuple[str, ...] = (
     "task_url_navigations",
     "flagged",
     "invalid_reason",
+    # spec-r2 §1.2 (C1b/C1d) audit keys: which attempt produced the row and whether the 402/network
+    # circuit breaker fired on it.  Disclosure only — they never enter any denominator or verdict.
+    "attempt",
+    "infra_circuit_break",
 )
 
 OFFICIAL_PASSED = "official_passed"

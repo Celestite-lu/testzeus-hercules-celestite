@@ -57,28 +57,34 @@ def row(**overrides: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------
 
 
-def test_e17_timeout_records_the_reward_it_has_and_no_junit_is_sticky() -> None:
-    """E17：runner 超时 + 有 reward → status=timeout 且照录 reward；JUnit 缺失 → no_junit。"""
-    timed_out = row(runner_status="timeout", junit_passed=None, junit_terminate=None, junit_xml=None, duration_s=600.0, total_tokens=None, cost_usd=None)
-    assert timed_out["status"] == STATUS_TIMEOUT
-    assert timed_out["official_passed"] is False
-    assert timed_out["reward_raw"] == 1.0
-    assert timed_out["done"] is True
-    assert timed_out["disagreement"] is None
-    assert timed_out["total_tokens"] is None
+def test_e17_page_reward_outranks_infra_but_infra_sticks_without_one() -> None:
+    """E17（r2 C1a）：raw>0 压倒 infra 状态（救援格）；raw<=0/缺失时 infra 状态保留（仍可重试）。"""
+    rescued_timeout = row(runner_status="timeout", junit_passed=None, junit_terminate=None, junit_xml=None, duration_s=600.0, total_tokens=None, cost_usd=None)
+    assert rescued_timeout["status"] == STATUS_OFFICIAL_PASSED  # 引擎超时但页面已过 → 救援
+    assert rescued_timeout["official_passed"] is True
+    assert rescued_timeout["runner_status"] == STATUS_TIMEOUT  # 披露键：r1 口径下该行是 timeout
+    assert rescued_timeout["reward_raw"] == 1.0
+    assert rescued_timeout["done"] is True
+    # disagreement 语义不变（§1.1）：official 行都计算；junit 缺失时上游表达式落 False（r1 已有语义）
+    assert rescued_timeout["disagreement"] is False
+    assert rescued_timeout["total_tokens"] is None
+
+    # 页面判负（含 timed out 的 raw=-1）不可能被误判通过：infra 状态保留
+    timed_out_negative = row(runner_status="timeout", reward={"raw": -1, "done": True, "reason": "timed out"}, junit_passed=None, duration_s=600.0, total_tokens=None, cost_usd=None)
+    assert timed_out_negative["status"] == STATUS_TIMEOUT and timed_out_negative["official_passed"] is False
 
     timed_out_without_reward = row(runner_status="timeout", reward=None, junit_passed=None, duration_s=600.0)
     assert timed_out_without_reward["status"] == STATUS_TIMEOUT
     assert timed_out_without_reward["reward_raw"] is None and timed_out_without_reward["done"] is None
 
-    no_junit = row(runner_status="no_junit", junit_passed=None, junit_terminate=None, junit_xml=None)
-    assert no_junit["status"] == STATUS_NO_JUNIT
-    assert no_junit["official_passed"] is False
-    assert no_junit["reward_raw"] == 1.0  # 记录值照录，但官方不看它
+    rescued_no_junit = row(runner_status="no_junit", junit_passed=None, junit_terminate=None, junit_xml=None)
+    assert rescued_no_junit["status"] == STATUS_OFFICIAL_PASSED
+    assert rescued_no_junit["runner_status"] == STATUS_NO_JUNIT
 
-    # 顺序：超时优先于 no_junit / no_reward（§7.2.1 → §7.2.2 → §7.2.3）
+    # 无页面正奖励时顺序不变：超时优先于 no_junit / no_reward（§7.2.1 → §7.2.2 → §7.2.3）
     both = row(runner_status="timeout", reward=None, junit_passed=None)
     assert both["status"] == STATUS_TIMEOUT
+    assert both["runner_status"] == STATUS_TIMEOUT
 
 
 def test_e18_missing_reward_and_missing_goal() -> None:
@@ -135,6 +141,51 @@ def test_e19_official_verdict_and_disagreement_both_directions() -> None:
 
     # 行结构与 §7.1 的键集合一致
     assert set(row()) == set(metrics_module.ROW_KEYS)
+
+
+def test_t2_row_schema_carries_the_three_r2_keys_and_metrics_ignore_them() -> None:
+    """T2：行键 == 更新后的 ROW_KEYS（含 runner_status/attempt/infra_circuit_break）；三键零进分母。"""
+    from record2gherkin.benchmark import orchestrator as orchestrator_module
+
+    fresh = row()
+    assert fresh["runner_status"] == STATUS_OFFICIAL_PASSED  # runner passed + raw>0 → r1 口径同样通过
+    assert fresh["attempt"] == 1  # 无重试恒 1
+    assert fresh["infra_circuit_break"] is False
+
+    rescue = row(runner_status="timeout", junit_passed=None, junit_xml=None, junit_terminate=None, duration_s=600.0, total_tokens=None, cost_usd=None)
+    assert set(rescue) == set(metrics_module.ROW_KEYS)
+    assert set(metrics_module.ROW_KEYS) >= {"runner_status", "attempt", "infra_circuit_break"}
+
+    rows = [
+        {**rescue, "infra_circuit_break": True, "attempt": 2},
+        _metric_row(TASKS[1], status=STATUS_OFFICIAL_FAILED, official_passed=False, reward_raw=0, junit_passed=False, disagreement=False),
+    ]
+    for extra in ({"runner_status": "bogus"}, {"attempt": 99}, {"infra_circuit_break": True}):
+        mutated = dict(rows[0])
+        mutated.update(extra)
+        baseline = metrics_module.summarize([mutated, rows[1]], tasks=TASKS).overall
+        reference = metrics_module.summarize(rows, tasks=TASKS).overall
+        assert (baseline.passed, baseline.total) == (reference.passed, reference.total)  # 不进分母/判定
+    # no_goal 行的 runner_status 落 None（attempt 键仍在）
+    no_goal = orchestrator_module.build_result_row(
+        task=TASK,
+        seed=42,
+        goal=None,
+        episode_ms=240000,
+        runner_status=None,
+        reward=None,
+        junit_passed=None,
+        junit_terminate=None,
+        junit_xml=None,
+        failure_message="no_goal: x",
+        duration_s=None,
+        total_tokens=None,
+        cost_usd=None,
+        started_at="2026-09-22T00:00:00+00:00",
+        finished_at="2026-09-22T00:00:01+00:00",
+    )
+    assert no_goal["status"] == STATUS_NO_GOAL and no_goal["runner_status"] is None
+    assert no_goal["attempt"] == 1 and no_goal["infra_circuit_break"] is False
 
 
 # ---------------------------------------------------------------------------------------------

@@ -13,6 +13,16 @@ scripts to the served ``core/core.js`` (a pure append — the vendored bytes are
 * **reward hook** — wraps ``core.endEpisode`` and POSTs the terminal state to ``/__r2g_reward``
   synchronously (the page may be destroyed right after).
 
+Two opt-in (default off) r2 patch layers (spec-r2 §4), both server-level flags — the URL, the seed
+and the episode budget semantics never change:
+
+* ``--single-start`` (C3) — 补丁 A switches to ``AUTO_START_PATCH_SINGLE``: the episode auto-starts
+  at most once per tab (``sessionStorage["r2g_started"]``); an intercepted re-load neither produces a
+  reward record nor leaves a usable START overlay (M2 hardening).
+* ``--terminal-cue`` (C2) — appends ``TERMINAL_CUE_PATCH``: a neutral, constant ``EPISODE ENDED``
+  marker appears in the page corner when the episode ends.  No reward value, no success/failure word,
+  no POST — the page reward stays the only judging authority.
+
 Endpoints (spec §3.3)::
 
     GET  /miniwob/<file>.html        vendored bytes as-is (404 outside the root, no directory listing)
@@ -51,6 +61,9 @@ CORE_JS_SUFFIX = "/core/core.js"
 PATCH_START_MARKER = "__R2G_PATCH_START__"
 PATCH_END_MARKER = "__R2G_PATCH_END__"
 REWARD_HOOK_MARKER = "__R2G_REWARD_HOOK__"
+#: spec-r2 §4.1/§4.2/§4.3 markers of the two opt-in (default off) r2 patch layers.
+PATCH_SINGLE_START_MARKER = "__R2G_PATCH_SINGLE_START__"
+TERMINAL_CUE_MARKER = "__R2G_TERMINAL_CUE__"
 
 #: spec §3.2 补丁 A (auto-start), verbatim — the review-revised text (必改 1.4) plus the security
 #: hardening of 安全审查 R1 §2.V1/V2 (H1).  The hardening runs *after* ``startEpisodeReal()`` succeeded:
@@ -103,6 +116,76 @@ AUTO_START_PATCH = """/* __R2G_PATCH_START__ */
 })();
 /* __R2G_PATCH_END__ */"""
 
+#: spec-r2 §4.2 新增① (C3 single-start, M2 加固): the interception branch of the single-start
+#: variant, verbatim.  A second load of the same URL in a tab that already started its episode
+#: must neither auto-start again **nor** leave a clickable START overlay: at patch-evaluation time
+#: ``core`` is already defined, so both episode entry points are stubbed and the HUD/cover are
+#: hidden with an injected stylesheet — same V2 hardening as the successful-start branch.
+_SINGLE_START_GUARD_BLOCK = """  try {
+    if (sessionStorage.getItem("r2g_started") !== null) {
+      /* 被拦截加载面同样应用 V2 加固（review-r2 M2）：拦截态下 START 覆盖层可点，
+         onclick 在点击期经 core.startEpisodeReal() 动态取函数（core.js:78-80），
+         会重开无 Math.seedrandom(seed) 的随机实例并 POST 新 reward 记录，
+         经 /latest last-wins 覆盖本格已有终局——必须同层封死。
+         stub 在补丁求值期执行（core 此刻已定义，无需等 cover_div）。 */
+      core.startEpisodeReal = function () {};
+      core.startEpisode = function () {};
+      core.updateDisplay = function () {};
+      var harden = document.createElement("style");
+      harden.textContent = "#reward-display, #sync-task-cover { display: none !important; }";
+      (document.head || document.documentElement).appendChild(harden);
+      return;
+    }
+  } catch (e) {}
+  /* ↑ 新增①：本 tab 已开局过 → 本次加载不自动开局（页面停在未开局状态，不产生 reward 记录），
+     且拦截态与开局成功态受同等 V2 加固（stub + CSS 隐藏，双保险不依赖 onclick 绑定形态） */"""
+
+#: spec-r2 §4.2 新增②: the success branch registers the start so the next load hits 新增①.
+_SINGLE_START_SETITEM_LINE = '        try { sessionStorage.setItem("r2g_started", seed); } catch (e) {}\n' "        /* ↑ 新增②：开局成功登记（同 tab 二次 load 被 新增① 拦截） */"
+
+#: spec-r2 §4.2: the single-start variant of 补丁 A — derived from :data:`AUTO_START_PATCH` so it can
+#: differ from it in exactly three places (marker line, 新增① guard, 新增② setitem); everything else
+#: is byte-identical by construction (T6d).
+AUTO_START_PATCH_SINGLE = (
+    AUTO_START_PATCH.replace(f"/* {PATCH_START_MARKER} */", f"/* {PATCH_SINGLE_START_MARKER} */", 1)
+    .replace(
+        "  if (seed === null) return;\n",
+        "  if (seed === null) return;\n" + _SINGLE_START_GUARD_BLOCK + "\n",
+        1,
+    )
+    .replace(
+        "        clearInterval(timer); /* 只在开局成功后停止轮询 */\n",
+        "        clearInterval(timer); /* 只在开局成功后停止轮询 */\n" + _SINGLE_START_SETITEM_LINE + "\n",
+        1,
+    )
+)
+
+#: spec-r2 §4.3 终局信号 (C2, ``--terminal-cue``): a neutral, constant ``EPISODE ENDED`` marker is
+#: injected into the page when the episode ends.  It carries no reward/success information (the page
+#: reward stays the only authority), it does not POST and it does not touch ``WOB_RAW_REWARD_GLOBAL``
+#: — it only lets the agent stop spinning once the episode is over.
+TERMINAL_CUE_PATCH = """/* __R2G_TERMINAL_CUE__ */
+(function () {
+  var orig = core.endEpisode;
+  if (typeof orig !== "function") return;
+  core.endEpisode = function () {
+    var ret = orig.apply(this, arguments);
+    try {
+      var cue = document.getElementById("r2g-terminal-cue");
+      if (!cue) {
+        cue = document.createElement("div");
+        cue.id = "r2g-terminal-cue";
+        cue.style.cssText =
+          "position:fixed;left:8px;bottom:8px;font:12px monospace;color:#888;" +
+          "background:#fff;padding:2px 6px;z-index:2147483647;";
+        document.body.appendChild(cue);
+      }
+      cue.textContent = "EPISODE ENDED"; /* 中性：无数值、无成败、恒定文本 */
+    } catch (e) { /* 绝不干扰 episode 本身 */ }
+    return ret;
+  };
+})();"""
+
 #: spec §3.2 补丁 B (reward hook), verbatim.
 REWARD_HOOK_PATCH = """/* __R2G_REWARD_HOOK__ */
 (function () {
@@ -152,10 +235,19 @@ class PortInUseError(RuntimeError):
     """Raised when the configured port cannot be bound (spec §3.1: never auto-switch ports)."""
 
 
-def patch_core_js(source: bytes) -> bytes:
-    """Vendored ``core.js`` bytes + the two patches as a pure append (spec §3.2)."""
-    patches = f"\n{AUTO_START_PATCH}\n{REWARD_HOOK_PATCH}\n".encode("utf-8")
-    return source + patches
+def patch_core_js(source: bytes, *, terminal_cue: bool = False, single_start: bool = False) -> bytes:
+    """Vendored ``core.js`` bytes + the patches as a pure append (spec §3.2, spec-r2 §4.1).
+
+    Patch order: vendored source → 补丁 A (``AUTO_START_PATCH_SINGLE`` when ``single_start`` else the
+    r1 ``AUTO_START_PATCH``, byte-identical by default) → 补丁 B (reward hook) → ``TERMINAL_CUE_PATCH``
+    (only when ``terminal_cue``).  Both flags default to off, which reproduces the r1 bytes exactly.
+    """
+    auto_start = AUTO_START_PATCH_SINGLE if single_start else AUTO_START_PATCH
+    patches = [auto_start, REWARD_HOOK_PATCH]
+    if terminal_cue:
+        patches.append(TERMINAL_CUE_PATCH)
+    appended = "\n" + "\n".join(patches) + "\n"
+    return source + appended.encode("utf-8")
 
 
 def _now() -> str:
@@ -235,7 +327,7 @@ def content_type_for(path: Path) -> str:
     return CONTENT_TYPES.get(path.suffix.lower(), DEFAULT_CONTENT_TYPE)
 
 
-def _make_handler(root: Path, collector: RewardCollector) -> type[BaseHTTPRequestHandler]:
+def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool = False, single_start: bool = False) -> type[BaseHTTPRequestHandler]:
     class MiniWobHandler(BaseHTTPRequestHandler):
         server_version = "MiniWobPatchServer/1.0"
         protocol_version = "HTTP/1.1"
@@ -263,7 +355,7 @@ def _make_handler(root: Path, collector: RewardCollector) -> type[BaseHTTPReques
                 self._send_json(404, {"error": "not_found", "path": self.path})
                 return
             if self.path.split("?", 1)[0].endswith(CORE_JS_SUFFIX):
-                body = patch_core_js(body)
+                body = patch_core_js(body, terminal_cue=terminal_cue, single_start=single_start)
                 self._send(200, body, "text/javascript")
                 return
             self._send(200, body, content_type_for(path))
@@ -336,10 +428,14 @@ class MiniWobServer:
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         rewards_file: str | Path | None = None,
+        terminal_cue: bool = False,
+        single_start: bool = False,
     ) -> None:
         self.root = Path(root).resolve()
         self.host = host
         self._requested_port = port
+        self.terminal_cue = bool(terminal_cue)
+        self.single_start = bool(single_start)
         self.collector = RewardCollector(rewards_file)
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -353,7 +449,7 @@ class MiniWobServer:
         if not self.root.is_dir():
             raise FileNotFoundError(f"serving root does not exist: {self.root}")
         try:
-            self._httpd = ThreadingHTTPServer((self.host, self._requested_port), _make_handler(self.root, self.collector))
+            self._httpd = ThreadingHTTPServer((self.host, self._requested_port), _make_handler(self.root, self.collector, terminal_cue=self.terminal_cue, single_start=self.single_start))
         except OSError as exc:
             raise PortInUseError(f"cannot bind {self.host}:{self._requested_port} ({exc}); free the port or pick another one explicitly") from exc
         self._httpd.daemon_threads = True
@@ -404,9 +500,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--rewards-file", default=None, help="JSONL destination for terminal records (memory-only when omitted)")
+    parser.add_argument("--terminal-cue", action="store_true", help="spec-r2 §4.3 (C2): append the neutral EPISODE ENDED terminal-cue patch")
+    parser.add_argument("--single-start", action="store_true", help="spec-r2 §4.2 (C3): auto-start at most once per tab (sessionStorage gate)")
     args = parser.parse_args(argv)
 
-    server = MiniWobServer(args.root, host=args.host, port=args.port, rewards_file=args.rewards_file)
+    server = MiniWobServer(args.root, host=args.host, port=args.port, rewards_file=args.rewards_file, terminal_cue=args.terminal_cue, single_start=args.single_start)
     try:
         server.start()
     except (PortInUseError, FileNotFoundError) as exc:

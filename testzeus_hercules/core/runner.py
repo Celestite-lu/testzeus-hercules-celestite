@@ -21,20 +21,29 @@ class BaseRunner:
     def __init__(
         self,
         planner_max_chat_round: int = 500,
-        browser_nav_max_chat_round: int = 50,
+        browser_nav_max_chat_round: int | None = None,
         stake_id: str | None = None,
         dont_terminate_browser_after_run: bool = False,
     ):
         self.planner_number_of_rounds = planner_max_chat_round
+        # r2 C4b (spec-r2 §5.1): the round-cap default is read from the global config *inside*
+        # __init__ (Python default parameters evaluate at definition time).  Unset/invalid config
+        # falls back to 50 — the historical r1 behaviour.
+        if browser_nav_max_chat_round is None:
+            raw = str(get_global_conf().get_config().get("BROWSER_NAV_MAX_CHAT_ROUND") or "").strip()
+            try:
+                browser_nav_max_chat_round = int(float(raw)) if raw else 50
+            except ValueError:
+                browser_nav_max_chat_round = 50
+            if browser_nav_max_chat_round <= 0:
+                browser_nav_max_chat_round = 50
         self.nav_agent_number_of_rounds = browser_nav_max_chat_round
         self.browser_manager: PlaywrightManager | None = None
         self.simple_hercules: SimpleHercules | None = None
         self.is_running = False
         self.stake_id = stake_id
         self.dont_terminate_browser_after_run = dont_terminate_browser_after_run
-        self.save_chat_logs_to_files = os.getenv(
-            "SAVE_CHAT_LOGS_TO_FILE", "True"
-        ).lower() in ["true", "1"]
+        self.save_chat_logs_to_files = os.getenv("SAVE_CHAT_LOGS_TO_FILE", "True").lower() in ["true", "1"]
         self.planner_agent_name = "planner_agent"
         self.shutdown_event = asyncio.Event()
 
@@ -69,9 +78,7 @@ class BaseRunner:
             browser_nav_max_chat_round=self.nav_agent_number_of_rounds,
         )
 
-        self.browser_manager = PlaywrightManager(
-            gui_input_mode=False, stake_id=self.stake_id
-        )
+        self.browser_manager = PlaywrightManager(gui_input_mode=False, stake_id=self.stake_id)
         await self.browser_manager.async_initialize()
 
     async def clean_up(self) -> None:
@@ -83,17 +90,11 @@ class BaseRunner:
 
     async def save_chat_logs(self) -> None:
         """Save planner chat logs to file or logger."""
-        agents_map = (
-            cast(Dict[str, Any], self.simple_hercules.agents_map)
-            if self.simple_hercules
-            else {}
-        )
+        agents_map = cast(Dict[str, Any], self.simple_hercules.agents_map) if self.simple_hercules else {}
         res_output_thoughts_logs_di: Dict[str, List[Dict[str, Any]]] = {}
 
         if self.simple_hercules and self.simple_hercules._last_graph_result:
-            res_output_thoughts_logs_di[self.planner_agent_name] = list(
-                self.simple_hercules._last_graph_result.chat_history
-            )
+            res_output_thoughts_logs_di[self.planner_agent_name] = list(self.simple_hercules._last_graph_result.chat_history)
         elif self.planner_agent_name in agents_map:
             planner = agents_map[self.planner_agent_name]
             if hasattr(planner, "chat_messages"):
@@ -109,17 +110,11 @@ class BaseRunner:
         for key, vals in res_output_thoughts_logs_di.items():
             for idx, val in enumerate(vals):
                 logger.debug(f"Planner chat log: {val}")
-                content = (
-                    val["content"].replace("```json", "").replace("```", "").strip()
-                )
+                content = val["content"].replace("```json", "").replace("```", "").strip()
                 try:
-                    res_output_thoughts_logs_di[key][idx]["content"] = json.loads(
-                        content
-                    )
+                    res_output_thoughts_logs_di[key][idx]["content"] = json.loads(content)
                 except json.JSONDecodeError:
-                    logger.debug(
-                        f"Failed to decode JSON: {content}, keeping as multiline string"
-                    )
+                    logger.debug(f"Failed to decode JSON: {content}, keeping as multiline string")
                     res_output_thoughts_logs_di[key][idx]["content"] = content
 
         if self.save_chat_logs_to_files:
@@ -128,11 +123,7 @@ class BaseRunner:
                 "agent_inner_thoughts.json",
             )
             async with aiofiles.open(log_path, "w", encoding="utf-8") as f:
-                await f.write(
-                    json.dumps(
-                        res_output_thoughts_logs_di, ensure_ascii=False, indent=4
-                    )
-                )
+                await f.write(json.dumps(res_output_thoughts_logs_di, ensure_ascii=False, indent=4))
             logger.debug("Chat messages saved")
         else:
             logger.info(
@@ -152,17 +143,11 @@ class BaseRunner:
         if command:
             self.is_running = True
             start_time = time.time()
-            current_url = (
-                await self.browser_manager.get_current_url()
-                if self.browser_manager
-                else None
-            )
+            current_url = await self.browser_manager.get_current_url() if self.browser_manager else None
 
             if self.simple_hercules:
                 await self.browser_manager.update_processing_state("processing")  # type: ignore
-                result = await self.simple_hercules.process_command(
-                    command, current_url
-                )
+                result = await self.simple_hercules.process_command(command, current_url)
                 await self.browser_manager.update_processing_state("done")  # type: ignore
 
             elapsed_time = round(time.time() - start_time, 2)
@@ -197,9 +182,7 @@ class BaseRunner:
 class CommandPromptRunner(BaseRunner):
     async def start(self) -> None:
         await self.initialize()
-        command: str = await async_input(
-            "Enter your command (or type 'exit' to quit): "
-        )
+        command: str = await async_input("Enter your command (or type 'exit' to quit): ")
         await self.process_command(command)
         await self.clean_up()
         await self.shutdown_event.wait()
