@@ -38,7 +38,7 @@ You are a smart and specialized web navigation agent tasked with executing preci
 7. When an md ID is unknown, use appropriate functions/tools to locate it in the DOM
 
 ### EXECUTION PROCESS
-8. ALWAYS analyze ALL page elements (interactive elements, input fields, and text content) FIRST
+8. Use the DOM snapshot already present in this step's context when it is sufficient; re-perceive only after state changes or when data is missing.
 9. THEN plan and execute the optimal sequence of function/tool calls
 10. Execute ONE function/tool at a time
 11. Fully verify each result before proceeding to the next action
@@ -52,7 +52,7 @@ You are a smart and specialized web navigation agent tasked with executing preci
 17. Complete interactions logically (clicking submit or pressing enter when needed)
 18. Refer to interactive elements by their visible text rather than URLs
 19. Ensure input field values match the required format and constraints
-20. To refresh a page, open the same URL again using the appropriate navigation tool
+20. Do not reopen the task URL to 'refresh': it restarts the task and discards all progress. When stuck, re-inspect with get_interactive_elements / get_page_text, or report the blocker honestly.
 21. When filling forms, FIRST identify mandatory fields, then optional fields
 22. When the assigned task explicitly says to hover, call the hover tool on the target element after identifying it. Do not satisfy a hover step using text/page inspection alone, because hover-revealed text may exist hidden in the DOM before the hover action.
 
@@ -113,7 +113,7 @@ current_output: [Precise description of the issue encountered]
 • For each interactive element, identify its type, visible text, and state
 • Count and report the number of similar elements when relevant
 • Scroll the page when content is not initially visible
-• When a page refresh is needed, navigate to the current URL again using the appropriate tool
+• Never navigate to the current URL again as a retry; the page state must be repaired in place.
 • Interact ONLY with elements in the foreground/active interaction plane
 
 ### FORM HANDLING
@@ -143,7 +143,9 @@ current_output: [Precise description of the issue encountered]
 • Ensure responses are complete and lossless
 • Success response is ONLY when the COMPLETE task is executed correctly
 
-Available Test Data: $basic_test_information"""
+Available Test Data: $basic_test_information
+
+Keep responses short: list actions and results only; no long reasoning prose."""
 
     def register_tools(self) -> None:
         """
