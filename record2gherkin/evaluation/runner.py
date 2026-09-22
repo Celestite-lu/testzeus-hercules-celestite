@@ -210,6 +210,9 @@ def build_child_env(api_key: str, *, model: str | None = None, base_url: str | N
             # 本机直连 GitHub releases 不稳，uBlock 扩展下载超时会让浏览器初始化直接失败
             # （playwright_manager.py:349,369 httpx.ConnectTimeout）；demo 站无广告，禁用无副作用。
             "ENABLE_UBLOCK_EXTENSION": "false",
+            # 系统代理开启时 chromium 走系统代理且不转发 127.0.0.1，任务页会 chrome-error；
+            # 门控见 playwright_manager._proxy_bypass_args（默认关，仅 benchmark 子进程注入）。
+            "CHROMIUM_PROXY_BYPASS_LOOPBACK": "1",
         }
     )
     return env

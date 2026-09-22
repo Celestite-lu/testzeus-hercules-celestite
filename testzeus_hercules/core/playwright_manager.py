@@ -576,6 +576,18 @@ class PlaywrightManager:
         # Start tracing only once after browser context is created
         await self._start_tracing()
 
+    @staticmethod
+    def _proxy_bypass_args() -> List[str]:
+        """CHROMIUM_PROXY_BYPASS_LOOPBACK=1 时让 chromium 绕过系统代理直连回环地址。
+
+        系统代理（如 UniClash）开启时 chromium 默认走系统代理，而代理不转发 127.0.0.1，
+        导致本地任务页加载为 chrome-error://chromewebdata/。`<-loopback>` 只旁路回环，
+        外网地址仍走系统代理。默认关闭（不设 env 无行为变化）。
+        """
+        if os.environ.get("CHROMIUM_PROXY_BYPASS_LOOPBACK", "").lower() in ("1", "true", "yes"):
+            return ["--proxy-bypass-list=<-loopback>"]
+        return []
+
     def _build_emulation_context_options(self) -> Dict[str, Any]:
         """
         Build context options for emulation based on device name and other settings.
@@ -637,6 +649,8 @@ class PlaywrightManager:
             if self.browser_type == "chromium" and self._extension_path is not None:
                 disable_args.append(f"--disable-extensions-except={self._extension_path}")
                 disable_args.append(f"--load-extension={self._extension_path}")
+            if self.browser_type == "chromium":
+                disable_args.extend(self._proxy_bypass_args())
 
             launch_options = {
                 "headless": self.isheadless,
@@ -734,6 +748,7 @@ class PlaywrightManager:
 
             # Handle browser-specific launch options
             if self.browser_type == "chromium":
+                disable_args.extend(self._proxy_bypass_args())
                 if self.browser_channel:
                     browser_context_kwargs["channel"] = self.browser_channel
                 # Note: version is handled during installation, not at launch time

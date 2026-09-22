@@ -94,12 +94,19 @@ STATUS_NO_REWARD = "no_reward"
 STATUS_NO_GOAL = "no_goal"
 
 #: spec-r2 §2.2 (C1b): markers that turn a fast infra death into a circuit-break event.
+#: 2026-09-22 增补限流族（security-review-r2-pre + coding plan 5h 窗口）："Error code: 429" 是
+#: langchain 的标准报错形态；裸 "429" 会误命中时长数字，不用。
 CIRCUIT_BREAK_MARKERS = (
     "402",
     "Insufficient Balance",
     "insufficient balance",
     "insufficient_user_balance",
     "insufficient_quota",
+    "Error code: 429",
+    "Too Many Requests",
+    "RateLimitError",
+    "rate limit",
+    "限流",
     "Connection error",
     "APIConnectionError",
 )
@@ -743,6 +750,7 @@ class Orchestrator:
         latency_env: bool = False,
         smoke_cells: Sequence[str] = (),
         provider: str | runner_module.LLMProviderConfig | None = None,
+        max_cells: int | None = None,
     ) -> None:
         if stage not in tasks_module.STAGES:
             raise BenchmarkError(f"unknown stage: {stage!r} (expected one of {tasks_module.STAGES})")
@@ -785,6 +793,7 @@ class Orchestrator:
         self.extra_tools = bool(extra_tools)
         self.template_notes = bool(template_notes)
         self.latency_env = bool(latency_env)
+        self.max_cells = int(max_cells) if max_cells else None
         self.smoke_subdomains = smoke
         #: spec-r2 §4.1: every switch lands in the manifest ``flags`` object (headline = all-on).
         self.flags: dict[str, Any] = {
@@ -832,8 +841,13 @@ class Orchestrator:
             single_start=self.single_start,
         )
         try:
+            executed = 0
             for cell in cells:
+                if self.max_cells is not None and executed >= self.max_cells:
+                    logger.info("orchestrator: --max-cells %s reached (%s new cells done), stopping early — resume by rerunning the same command", self.max_cells, executed)
+                    break
                 self._run_cell(cell)
+                executed += 1
             self._retry_infrastructure_failures()
         finally:
             stop_miniwob_server(server)
@@ -1263,6 +1277,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--template-notes", action="store_true", help="C7: append the fixed context notes block to the generated feature")
     parser.add_argument("--latency-env", action="store_true", help="C4f: inject the latency pack env (timeout/retries/refresh mode/round cap/step budget)")
     parser.add_argument("--smoke-cells", default="", help="comma-separated subdomains appended to the pilot plan (pilot only, never retried)")
+    parser.add_argument("--max-cells", type=int, default=None, help="stop after N new cells this invocation (pacing for 5h-window quotas; resume by rerunning the same command)")
     args = parser.parse_args(argv)
 
     try:
@@ -1286,6 +1301,7 @@ def main(argv: list[str] | None = None) -> int:
             latency_env=args.latency_env,
             smoke_cells=[cell for cell in args.smoke_cells.split(",") if cell.strip()],
             provider=args.provider,
+            max_cells=args.max_cells,
         )
         return orchestrator.run()
     except (BenchmarkError, tasks_module.BenchmarkError, runner_module.RunnerError) as exc:
