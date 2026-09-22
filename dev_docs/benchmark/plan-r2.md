@@ -26,7 +26,7 @@
 
 **C1c 运行前余额预检（必须实现，运行 gate）**
 - 证据：key 已余额不足；r2 全量前无预检则第一格就烧超时。
-- 行为：orchestrator 起服务前做一次 `max_tokens=1` 探测调用（litellm，复用 runner 的 model/base_url/key 常量），任何 402/余额/连接异常 → **exit 3，不启动任何执行**；探测文本经 `mask_secret` 纪律。`--dry-run` 不探测。
+- 行为：orchestrator 起服务前做一次 `max_tokens=1` 探测调用（**与引擎同栈**的 `ChatOpenAI(model, api_key, base_url=LLM_MODEL_BASE_URL)`；litellm 裸模型名缺 provider 前缀会恒败且不构成对引擎路径的证明——review-r2 M4），任何 402/余额/连接异常 → **exit 3，不启动任何执行**；探测文本经 `mask_secret` 纪律。`--dry-run` 不探测。
 - 实现位置：新增 `record2gherkin/benchmark/preflight.py` + `orchestrator.main()` 接线。
 - 开关：无（dry-run 天然豁免；不提供跳过开关）。
 
@@ -50,7 +50,7 @@
 - 方案：`sessionStorage["r2g_started"]` 限制每 tab 只自动开局一次；二次导航页面停在未开局状态（该次加载不产生新 reward 记录）。r1 实证 93% 重导航走同 tab（249/267），恰好被覆盖；force_new_tab 18 次是残余缺口，计数披露。
 - 语义影响（如实陈述）：封死后官方 last-wins 退化为"每 tab 唯一一次开局的终局奖励"——重导航不再重置计时、也不再产生覆盖记录；r1 中被重导航毁掉的已到手成绩（email-inbox-delete 型）在 r2 会保留。这不是制造成功，而是移除"重开续命"通道；报告披露该语义。r1 格内洗白为 0，故封死通道对 r1 成绩回放无影响。
 - 预期影响：直接 +0.8pp（email-inbox-delete 类）+ 大量时间税回收（间接）；r1 口径回放影响 ≈0。
-- 实现位置：`miniwob_server.py` 补丁 A 增补两行 JS（`--single-start` 启动参数门控）；read_goal 预读用独立 browser context，sessionStorage 不跨 context，预读不受影响（单测锁定）。
+- 实现位置：`miniwob_server.py` 补丁 A 增补两处 JS（`--single-start` 启动参数门控）；**被拦截的二次加载面同样应用 V2 加固**（stub `core.startEpisodeReal`/`core.startEpisode` + CSS 隐藏 HUD 与 START 覆盖层——否则拦截态点击 START 可重开无 seed 随机实例并经 last-wins 洗白，review-r2 M2）；read_goal 预读用独立 browser context，sessionStorage 不跨 context，预读不受影响（单测锁定）。
 - 开关：`--single-start`（默认 off；headline 显式开）。
 
 ### C4 延迟包（采纳，引擎侧，允许改 testzeus_hercules，独立 commit + 逐点开关）
@@ -70,7 +70,7 @@ r1 证据链：被杀格 35-101 executor 轮 vs 通过格 18.2 轮；轮间延�
 **C4c 输出克制（prompt 包）**：nav/planner system prompt 各加一句"响应简短：只列动作与结果，禁止长推理"（completion p90 1998 tokens 直拉每轮延迟）。
 
 **C4d 撤销"刷新重试"教学（prompt 包，= H2 方案 A）**
-- 已核对原文：`browser_nav_agent.py` L20 *"To refresh a page, open the same URL again…"*、L116 *"When a page refresh is needed, navigate to the current URL again…"*——引擎 prompt 在主动教重导航。删除两处，替换为："不要重开任务 URL——重开会重启任务并丢弃全部进度；卡住时改用 get_interactive_elements / get_page_text 重新审视，或如实报告受阻"。planner 侧同步一句"不要将重开 URL 作为重试手段"，并在 closure 规则中删"验证页面成功提示"类诱导（见 C4e）。
+- 已核对原文：`browser_nav_agent.py` L55（*"20. To refresh a page, open the same URL again using the appropriate navigation tool"*；先前误记 L20，勘误见 review-r2 M5-3）+ L116（*"When a page refresh is needed, navigate to the current URL again using the appropriate tool"*）——引擎 prompt 在主动教重导航。删除两处，替换为："不要重开任务 URL——重开会重启任务并丢弃全部进度；卡住时改用 get_interactive_elements / get_page_text 重新审视，或如实报告受阻"。planner 侧同步一句"不要将重开 URL 作为重试手段"，并在 closure 规则中删"验证页面成功提示"类诱导（见 C4e）。
 
 **C4e planner prompt 瘦身 + closure 规则修正（prompt 包）**
 - 已核对：`high_level_planner_agent.py` Closure Nudge Examples（L198-204）与 Critical Rules #5 "Final step must always include an assertion"（L300）诱导独立验证步——HUD 被加固隐藏后验证步注定空转。改为"helper 回报动作+submit 完成即终止；单动作任务不追加独立验证步；本环境无页面成功提示"。系统提示瘦身（现 322 行：删 Salesforce/SAP Platform Awareness、Test Data Iteration 等 MiniWoB 无关节）。
@@ -87,9 +87,9 @@ r1 证据链：被杀格 35-101 executor 轮 vs 通过格 18.2 轮；轮间延�
 - 证据：r1 全角色单模型（`runner.py:41 LLM_MODEL_NAME="deepseek-v4-pro"` 注入全部角色）；executor 轮是延迟主体（均值 9.0s/轮 × 51 轮）；planner 每格仅 3-4 轮（强模型保留对质量影响面小）。
 - 已核对的机制事实：
   - 引擎按三角色取配置：`core/runner.py:53-60` 读 `planner_agent`/`nav_agent`/`helper_agent`；`simple_hercules.py:170-199` 中 `nav_agent` 配置驱动**全部** nav/executor agents——路由 `nav_agent` 即覆盖执行循环。
-  - 配置文件通道：`AGENTS_LLM_CONFIG_FILE`（`config.py:166`，env 同名映射）+ `AGENTS_LLM_CONFIG_FILE_REF_KEY`；File 优先于 Env。
-  - **key 红线处理**：生成的 `agents_llm_config.json` 一律省略 `model_api_key`；`utils/llm_helper.py:85` 的 `create_chat_model` 会回退到环境变量 `MODEL_API_KEY`——故 child env 需增注 `MODEL_API_KEY=<key>`（key 仍只经 subprocess env，绝不落文件）。
-- 方案：orchestrator 生成 `<exp_dir>/agents_llm_config.json`（gitignore）：planner=deepseek-v4-pro、helper=deepseek-v4-pro（benchmark 文本 DOM 下 image-comparer helper 不触发，零风险）、nav=deepseek-flash；child env 注入 `AGENTS_LLM_CONFIG_FILE` + `REF_KEY=litellm` + `MODEL_API_KEY`。
+  - 配置文件通道：`AGENTS_LLM_CONFIG_FILE`（`config.py:166`，env 同名映射）+ `AGENTS_LLM_CONFIG_FILE_REF_KEY`；File 优先于 Env（**源级覆盖**：文件加载成功即 return，env provider 不注册）。
+  - **key 红线处理**：生成的 `agents_llm_config.json` 一律省略 `model_api_key`（key 仍只经 subprocess env，绝不落文件）。env 回退按键覆盖面不同：nav/helper 经 `create_chat_model` 读 `MODEL_API_KEY`（`utils/llm_helper.py:85`）；**planner 是裸构造 `ChatOpenAI`（`high_level_planner_agent.py:37-57`，不经 `create_chat_model`），只认 `OPENAI_API_KEY` env**——故 child env 需同值增注 `MODEL_API_KEY=<key>` 与 `OPENAI_API_KEY=<key>`，缺后者 headline 启动即崩（review-r2 M1）。
+- 方案：orchestrator 生成 `<exp_dir>/agents_llm_config.json`（gitignore）：planner=deepseek-v4-pro、helper=deepseek-v4-pro（benchmark 文本 DOM 下 image-comparer helper 不触发，零风险）、nav=deepseek-flash；child env 注入 `AGENTS_LLM_CONFIG_FILE` + `REF_KEY=litellm` + `MODEL_API_KEY` + `OPENAI_API_KEY`（同值，planner 裸 ChatOpenAI 专用，review-r2 M1）。
 - 预期：executor 轮延迟若 2×（9.0→4.5s），超时格省 ≈230s/格；与 C4 叠加但有重叠，合计已并入 C4 的 +2~6pp 区间；成本同步下降。风险：flash 对长 system prompt 顺从性差，可能放大行为问题——**pilot 10 格先行**，flash 模型名在 C1c 预检中一并探测（不可用则中止并报告，不静默回退）。
 - 开关：`--role-routing`（默认 off）+ `--nav-model`（默认 `deepseek-flash`）。
 
@@ -98,6 +98,7 @@ r1 证据链：被杀格 35-101 executor 轮 vs 通过格 18.2 轮；轮间延�
 - 已核对的机制事实：`core/extra_tools/drag_and_drop_tool.py` 现成（`@tool(name="drag_and_drop", agent_names=["browser_nav_agent"])`，md 选择器 + bounding-box 鼠标轨迹 down→move→up）；加载条件 = env `LOAD_EXTRA_TOOLS != "false"`（`core/extra_tools/__init__.py:11`，config 默认 `"false"`，`config.py:701`）；`simple_hercules.py:31` 无条件 `from ...extra_tools import *`；且 `_BROWSER_STATE_CHANGING_TOOLS` 已含 `"drag_and_drop"`（`simple_hercules.py:556`）——状态刷新守卫天然认识它。
 - 证据：拖拽/绘制/选区家族 14 格全军覆没，agent 只能 `press_key_combination` 冒充拖拽（failures §3.1）。
 - 改法：`--extra-tools` 时 `build_child_env` 增注 `LOAD_EXTRA_TOOLS=true`。**注意副作用**：该开关全量加载 extra_tools（clipboard/browser_assist/file_handler/geo/pdf/visual_skill）——clipboard 工具对 copy-paste×2 家族是意外潜在收益；H2③ 沙箱调用扫描在位，安全面不扩大（只开闸不加代码）。
+- 冒烟执行机制：`PILOT_SUBDOMAINS` 不含 drag 格（`tasks.py:24-35` 已核实），orchestrator 增 `--smoke-cells drag-items,drag-box` 追加执行（review-r2 M3，行为定义见 spec-r2 §4.1）。
 - 预期：家族上界 14 格，但 drag-circle/draw-line/drag-cube/drag-cube 属 canvas 盲区不在射程；保守 **+1~3 格（+0.8~2.4pp）**。先 2 格冒烟（drag-items、drag-box）验证工具被调用、不崩、无异常工具面，再计入预期。
 - 开关：`--extra-tools`（默认 off）。
 
@@ -145,9 +146,9 @@ A1–A3 = 30 次执行；A4 = 130 次执行（全量级，默认不做）。
 
 | 阶段 | Hercules 执行数 | 说明 |
 |---|---:|---|
-| 冒烟 pilot（全开 flags） | 10 + 2 重试 = 12 | 含拖拽冒烟 2 格（drag-items/drag-box 在集内则复用，否则 +2） |
+| 冒烟 pilot + drag 冒烟（全开 flags） | 10 + 2 重试 + 2 = 14 | drag 冒烟 2 格（drag-items/drag-box）经 `--smoke-cells` 追加执行（无重试；M3 机制） |
 | headline full | 125 + 5 重试 = 130 | 全开组合，单次 |
-| **r2 主预算合计** | **≤142** | orchestrator `assert_budget` 以 `R2_BUDGET_CAP=142` 硬拦 |
+| **r2 主预算合计** | **≤144** | orchestrator `assert_budget` 以 `R2_BUDGET_CAP=144` 硬拦 |
 | ablation A1–A3（另批） | 30 | 用户批准后执行 |
 | ablation A4（另批，默认不做） | 130 | 用户批准后执行 |
 | **r2 全项目上限** | **≤172（不含 A4）/ ≤302（含 A4）** | 逐项列出，逐项批准 |
@@ -161,7 +162,7 @@ A1–A3 = 30 次执行；A4 = 130 次执行（全量级，默认不做）。
 | D1 上午 | C1a-d（orchestrator/runner/preflight）+ 回放单测锁 +5、熔断/预检/attempt 日志单测 | `pytest tests/record2gherkin/benchmark -q` 全绿 |
 | D1 下午前半 | C2/C3 补丁层 + `--single-start/--terminal-cue` + 浏览器组单测（标记中性可见、二次 load 不开局） | 同上 |
 | D1 下午后半 | C4a-b 引擎改动（独立 commit）+ C4c-e prompt 包（独立 commit）+ C4f/C5/C6 env 注入 + C7 模板 + 全部单测；`make fmt` | 全绿 + 两个引擎 commit 各自可回退 |
-| D2 运行（0.5 天） | C1c 预检（**前置：用户确认充值**）→ 冒烟 12 → 检查（拖拽调用日志、flash 输出纪律、单次开局生效、无 402）→ headline full 130 → 汇总与 test-report 固化 | 预算 ≤142；报告含 §6 披露清单 |
+| D2 运行（0.5 天） | C1c 预检（**前置：用户确认充值**）→ 冒烟 14（pilot 12 + drag 2）→ 检查（拖拽调用日志、flash 输出纪律、单次开局生效、无 402）→ headline full 130 → 汇总与 test-report 固化 | 预算 ≤144；报告含 §6 披露清单 |
 | D2+（另批） | ablation A1–A3（30）；A4 默认不做 | 批准后执行 |
 
 ## 6. 诚实性披露清单（报告口径，每条必须原文出现）
@@ -186,5 +187,5 @@ A1–A3 = 30 次执行；A4 = 130 次执行（全量级，默认不做）。
 | R6 | C3 锁死误触 reload 的格（no_reward） | 低 | r1 实证 reload 是净伤害（0 洗白、−4pp），锁死只是把伤害显式化；no_reward 可检测且在重试池 |
 | R7 | C6 extra_tools 全量加载面扩大（visual_skill 多模态等） | 低 | 只开闸不改代码；H2③ 沙箱扫描在位；冒烟检查注册面与日志；不触发即无影响 |
 | R8 | 判分修复误救反例 | 极低 | email-inbox-delete 反例进 replay 单测永久锁定 |
-| R9 | 预算超支 | 低 | `assert_budget` 常量 R2_BUDGET_CAP=142 硬拦；ablation 独立批准 |
+| R9 | 预算超支 | 低 | `assert_budget` 常量 R2_BUDGET_CAP=144 硬拦；ablation 独立批准 |
 | R10 | 改动叠加后与 r1 不可比 | 声明级 | headline 逐项披露（§6）；归因靠 ablation（另批）；无 ablation 时报告明示多变量 |
