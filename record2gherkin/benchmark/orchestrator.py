@@ -857,8 +857,11 @@ class Orchestrator:
             logger.error("preflight failed: %s — 请充值或更换可用 key 后重试", exc)
             return 3
         models = [self.provider.model]
-        if self.role_routing and self.nav_model not in models:
-            models.append(self.nav_model)
+        if self.role_routing:
+            # 探全部将使用的模型（security-review-r2-pre W1）：nav 与 planner（helper 与 nav 同档时已覆盖）
+            for used in (self.nav_model, self.planner_model):
+                if used not in models:
+                    models.append(used)
         for model in models:
             result = preflight_module.probe_llm(api_key=key, model=model, base_url=self.provider.base_url)
             if not result.ok:
