@@ -170,6 +170,7 @@ testzeus-hercules/**/*.feature
 
 # 二开「录制即用例」私有文件：密钥、本地计划、实验产物
 LLM-Key.txt
+GLM-Key.txt
 .env.local
 PLAN.md
 .zcodeignore
