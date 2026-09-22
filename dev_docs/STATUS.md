@@ -20,6 +20,8 @@
 
 ## 决策日志（全量）
 
+- 2026-09-22（r1 分析）：架构反思关键发现——①延迟元凶是 executor 强制重感知双倍轮次而非 planner 轮次（超时格 51.3 轮 vs 通过格 19.9）；②HUD 加固移除了 agent 可见的成功信号→页面已过后空转到超时（r2 修复方向：终局信号回供或判分优先）；③重导航治理双方案（sessionStorage 单次开局 + prompt 撤销"刷新"教学）。9 假设见 analysis-r1-architecture.md，主推组合预期 50-56%。
+
 - D0：文档规范/AGENTS 规约/密钥 gitignore；pytest+playwright（无 node）。
 - D1：spec 修订 = 原代理返工 + 总编排 grep 核验；模块子目录级 conftest；快照归因缺陷修复（归给触发时刻最新事件）。
 - D2：P0-1 submit 去重（蒸馏器规则层）；P0-2 占位符注入落 CLI generate；pilot 复盘三修复（uBlock 禁用 / deepseek-v4-pro / 标题文件名清洗）。
