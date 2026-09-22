@@ -252,12 +252,16 @@ def run_feature(
     timeout_s: int = DEFAULT_TIMEOUT_S,
     api_key: str | None = None,
     dry_run: bool = False,
+    stdout_log_path: Path | None = None,
 ) -> RunResult:
     """Run one feature with Hercules in a sub-process and collect the JUnit outcome (spec §4.1).
 
     ``dry_run=True`` only builds the plan: nothing is executed and ``status`` is ``"dry_run"``.
     ``extra_env`` is merged over the generated child env (last write wins) and its values are masked
     in the log; it exists for sweep-level overrides, not for key transport.
+    ``stdout_log_path`` (spec-r2 §2.1, C1d) redirects the masked child log — the orchestrator passes
+    ``runs/<run_id>/attempt<N>/stdout.log`` so a retry never overwrites the previous attempt's
+    evidence; ``None`` keeps the historical default ``<run_dir>/stdout.log`` byte-for-byte.
     """
     plan = build_run_plan(feature_path, project_root, api_key=api_key)
     env = dict(plan.env)
@@ -303,7 +307,7 @@ def run_feature(
     wall_clock = time.monotonic() - started
 
     masked = mask_secret(stdout or "", key)
-    _write_stdout_log(plan.run_dir / "stdout.log", masked, run_id=run_id, timed_out=timed_out, returncode=process.returncode)
+    _write_stdout_log(stdout_log_path if stdout_log_path is not None else plan.run_dir / "stdout.log", masked, run_id=run_id, timed_out=timed_out, returncode=process.returncode)
 
     return _collect_result(
         run_id=run_id,

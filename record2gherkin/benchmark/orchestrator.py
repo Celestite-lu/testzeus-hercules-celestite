@@ -1,4 +1,4 @@
-"""Benchmark orchestration (spec §7): cells, server lifecycle, result rows, retries, manifest.
+"""Benchmark orchestration (spec §7, r2 increments in spec-r2).
 
 CLI::
 
@@ -8,15 +8,31 @@ CLI::
 
 Per cell the harness derives the seed, pre-reads the goal in its own browser, renders the feature,
 runs Hercules in a sub-process (:mod:`record2gherkin.evaluation.runner`) and finally asks the patch
-server for the terminal reward — the **only** authority for ``official_passed`` (spec §0 口径 4).
-Every cell produces exactly one appended ``results.jsonl`` row; ``timeout`` / ``no_junit`` /
-``no_reward`` cells may be retried once each (infrastructure only), a failed episode never is.
+server for the terminal reward — the **only** authority for ``official_passed`` (spec §0 口径 4,
+restored by the always-on C1a fix of spec-r2 §1.1: a positive page reward outranks engine
+infra statuses).  Every cell produces one appended ``results.jsonl`` row per attempt (r2: each
+attempt logs to its own ``runs/<run_id>/attempt<N>/stdout.log``); ``timeout`` / ``no_junit`` /
+``no_reward`` cells may be retried once each (infrastructure only, circuit-broken rows excluded), a
+failed episode never is.
 
 Every executed cell is additionally scanned for integrity (安全审查 R1 §4.2/§4.3, spec §7.6) over the
 artefacts that are already on disk: the renavigation count, ``file://`` escapes and sandbox-tool calls
-from ``stdout.log`` (H2) plus the ``rewards.jsonl`` record count / ``reason`` domain of the cell (H3).
-The scan only annotates the row (``task_url_navigations`` / ``flagged`` / ``invalid_reason``) — it
-never rewrites ``status`` or ``official_passed``.
+from the attempt's ``stdout.log`` (H2) plus the ``rewards.jsonl`` record count / ``reason`` domain of
+the cell (H3).  The scan only annotates the row (``task_url_navigations`` / ``flagged`` /
+``invalid_reason``) — it never rewrites ``status`` or ``official_passed``.
+
+r2 operations (all flag-gated, default off; C1a/C1b/C1c/C1d are always on):
+
+* C1c balance preflight — non-dry-run stages probe the LLM (same ChatOpenAI transport as the engine)
+  *before* the server starts; failure exits 3 without executing anything.
+* C1b circuit breaker — a timeout/no_junit attempt that died fast with a 402/balance/connection
+  marker in its log is excluded from the retry pool; two consecutive such rows abort the stage.
+* ``--terminal-cue`` / ``--single-start`` — miniwob_server patch layers (spec-r2 §4).
+* ``--role-routing`` / ``--nav-model`` — per-role model routing; generates
+  ``<exp_dir>/agents_llm_config.json`` (never containing the key) and injects the four env keys.
+* ``--latency-env`` / ``--extra-tools`` / ``--template-notes`` / ``--smoke-cells`` — engine env
+  pack, extra tool gate, Gherkin template notes and the pilot drag-smoke appendix.
+  All switches are recorded in the manifest ``flags`` object.
 """
 
 from __future__ import annotations
@@ -37,6 +53,7 @@ from typing import Any, Mapping, Sequence
 
 from record2gherkin.benchmark import goal_reader
 from record2gherkin.benchmark import metrics as metrics_module
+from record2gherkin.benchmark import preflight as preflight_module
 from record2gherkin.benchmark import tasks as tasks_module
 from record2gherkin.benchmark.miniwob_server import (
     DEFAULT_HOST,
@@ -55,9 +72,10 @@ DEFAULT_EXP_ROOT = REPO_ROOT / "dev_runs" / "benchmark"
 #: spec §6: 240s episode + planner head-room.
 DEFAULT_TIMEOUT_S = 600
 SERVER_HEALTH_TIMEOUT_S = 15.0
-#: spec §7.5: 142 Hercules executions is the cumulative red line of the whole benchmark.
-HERCULES_BUDGET_CAP = 142
-#: spec §7.5: infrastructure retry buffers (pilot 10+2, full 125+5).
+#: spec-r2 §0.2: the r1 cap of 142 is refined to 144 — smoke 14 (pilot 10 + retries 2 + drag smoke 2)
+#: plus headline 130 stays inside it; the ablation runs live outside this cap in their own exp roots.
+R2_BUDGET_CAP = 144
+#: spec §7.5: infrastructure retry buffers (pilot 10+2, full 125+5).  Smoke cells never retry.
 RETRY_BUDGET: Mapping[str, int] = {"pilot": 2, "full": 5}
 #: spec §7.5: retries cover infrastructure only, at most once per cell.
 INFRA_RETRY_LIMIT_PER_CELL = 1
@@ -69,6 +87,37 @@ STATUS_TIMEOUT = "timeout"
 STATUS_NO_JUNIT = "no_junit"
 STATUS_NO_REWARD = "no_reward"
 STATUS_NO_GOAL = "no_goal"
+
+#: spec-r2 §2.2 (C1b): markers that turn a fast infra death into a circuit-break event.
+CIRCUIT_BREAK_MARKERS = (
+    "402",
+    "Insufficient Balance",
+    "insufficient balance",
+    "insufficient_user_balance",
+    "insufficient_quota",
+    "Connection error",
+    "APIConnectionError",
+)
+CIRCUIT_BREAK_DURATION_S = 30.0
+CIRCUIT_BREAK_RUN_LIMIT = 2  # consecutive breaker rows -> abort the whole stage (exit 2)
+
+#: spec-r2 §5.3 (C4f ``--latency-env``): the whole latency pack travels as one env block; the three
+#: engine keys can still be overridden per key on the engine side.
+LATENCY_ENV_OVERRIDES: Mapping[str, str] = {
+    "LLM_REQUEST_TIMEOUT": "90",  # default 60 (llm_helper.py:21)
+    "LLM_MAX_RETRIES": "2",  # default 1 (llm_helper.py:22)
+    "BROWSER_STATE_REFRESH_MODE": "markers_only",
+    "BROWSER_NAV_MAX_CHAT_ROUND": "30",
+    "NAV_STEP_TIME_BUDGET_S": "120",
+}
+
+#: spec-r2 §6 (C5 ``--role-routing``): the generated per-role config and its child-env transport.
+ROLE_ROUTING_REF_KEY = "litellm"
+#: Planner/helper stay on the r1 benchmark model; only the nav (executor) role is routed (plan-r2 C5).
+ROLE_ROUTING_PLANNER_MODEL = runner_module.LLM_MODEL_NAME
+ROLE_ROUTING_HELPER_MODEL = runner_module.LLM_MODEL_NAME
+DEFAULT_NAV_MODEL = "deepseek-flash"
+AGENTS_LLM_CONFIG_FILENAME = "agents_llm_config.json"
 
 
 class BenchmarkError(RuntimeError):
@@ -129,8 +178,12 @@ def plan_cells(
     return cells
 
 
-def hercules_budget(*stages: str) -> dict[str, Any]:
-    """Planned Hercules runs per stage plus the infrastructure retry buffer (spec §7.5)."""
+def hercules_budget(*stages: str, extra_runs: int = 0) -> dict[str, Any]:
+    """Planned Hercules runs per stage plus the infrastructure retry buffer (spec §7.5, spec-r2 §0.2).
+
+    ``extra_runs`` counts appended ``--smoke-cells`` executions (spec-r2 §4.1); they are never
+    retried, so they enter the total but not the retry budget.
+    """
     breakdown: dict[str, int] = {}
     retry = 0
     for stage in stages:
@@ -138,12 +191,14 @@ def hercules_budget(*stages: str) -> dict[str, Any]:
             raise BenchmarkError(f"unknown stage: {stage!r} (expected one of {tasks_module.STAGES})")
         breakdown[stage] = tasks_module.STAGE_RUNS[stage]
         retry += RETRY_BUDGET[stage]
+    if extra_runs:
+        breakdown["smoke_cells"] = int(extra_runs)
     total = sum(breakdown.values()) + retry
-    return {"breakdown": breakdown, "retry": retry, "total": total, "cap": HERCULES_BUDGET_CAP}
+    return {"breakdown": breakdown, "retry": retry, "total": total, "cap": R2_BUDGET_CAP}
 
 
-def assert_budget(planned_runs: int, *, cap: int = HERCULES_BUDGET_CAP) -> None:
-    """Guard rail of spec §7.5: the benchmark must never plan more than ``cap`` Hercules runs."""
+def assert_budget(planned_runs: int, *, cap: int = R2_BUDGET_CAP) -> None:
+    """Guard rail of spec §7.5 / spec-r2 §0.2: never plan more than ``cap`` Hercules runs."""
     if planned_runs > cap:
         raise BenchmarkError(f"budget breach: {planned_runs} Hercules runs planned, cap is {cap}")
 
@@ -186,27 +241,43 @@ def build_result_row(
     task_url_navigations: int = 0,
     flagged: bool = False,
     invalid_reason: str | None = None,
+    attempt: int = 1,
+    infra_circuit_break: bool = False,
 ) -> dict[str, Any]:
-    """Assemble one ``results.jsonl`` row (spec §7.1) with the deterministic status rules of §7.2.
+    """Assemble one ``results.jsonl`` row (spec §7.1) with the r2 status rules of spec-r2 §1.1.
 
-    ``runner_status=None`` means "not executed" (goal pre-read failed, §7.2.5).  The official verdict is
-    ``reward_raw > 0`` and nothing else: a negative reward (the page's own ``timed out`` record is
-    ``raw=-1``) is recorded as-is and still counts as an official failure.
+    ``runner_status=None`` means "not executed" (goal pre-read failed, §7.2.5) and keeps the highest
+    priority.  C1a (always on, a correctness fix — not a relaxation): a positive page reward inside
+    the window outranks engine infra statuses, so "engine timed out but the page already passed"
+    cells are officially passed; a negative/zero page reward keeps the infra status (still retryable)
+    or falls through to the official verdict.  ``fetch_reward`` stays ``/latest`` (last-wins) — no
+    new whitewash channel.
 
-    The last three keys are the security-scan annotations of spec §7.6 (H2/H3): they never change
-    ``status``/``official_passed`` — the official reward stays the only authority (spec §0 口径 4).
+    The row additionally discloses ``runner_status`` — the status the row would have carried under
+    the r1 priority chain (``None`` for no_goal) so rescue cells stay auditable — plus ``attempt``
+    and ``infra_circuit_break`` (spec-r2 §1.2).  These keys, like the security-scan annotations of
+    spec §7.6, never change any metric denominator.
     """
+    raw = _reward_raw_value(reward)
     if runner_status is None:
         status = STATUS_NO_GOAL
-    elif runner_status == runner_module.STATUS_TIMEOUT:
-        status = STATUS_TIMEOUT
-    elif runner_status == runner_module.STATUS_NO_JUNIT:
-        status = STATUS_NO_JUNIT
+    elif raw is not None and raw > 0:
+        status = STATUS_OFFICIAL_PASSED
+    elif runner_status in (runner_module.STATUS_TIMEOUT, runner_module.STATUS_NO_JUNIT):
+        status = runner_status
     elif reward is None:
         status = STATUS_NO_REWARD
     else:
-        raw = _reward_raw_value(reward)
-        status = STATUS_OFFICIAL_PASSED if (raw is not None and raw > 0) else STATUS_OFFICIAL_FAILED
+        status = STATUS_OFFICIAL_FAILED
+
+    if runner_status is None:
+        runner_status_disclosure: str | None = None
+    elif runner_status in (runner_module.STATUS_TIMEOUT, runner_module.STATUS_NO_JUNIT):
+        runner_status_disclosure = runner_status
+    elif reward is None:
+        runner_status_disclosure = STATUS_NO_REWARD
+    else:
+        runner_status_disclosure = STATUS_OFFICIAL_PASSED if (raw is not None and raw > 0) else STATUS_OFFICIAL_FAILED
 
     official_passed = status == STATUS_OFFICIAL_PASSED
     if status in (STATUS_OFFICIAL_PASSED, STATUS_OFFICIAL_FAILED):
@@ -215,7 +286,6 @@ def build_result_row(
         disagreement = None
 
     subdomain = str(task["subdomain"])
-    raw = _reward_raw_value(reward)
     return {
         "run_id": tasks_module.make_run_id(subdomain, seed),
         "task_id": str(task["task_id"]),
@@ -226,6 +296,7 @@ def build_result_row(
         "goal": goal,
         "episode_max_time_ms": episode_ms,
         "status": status,
+        "runner_status": runner_status_disclosure,
         "official_passed": official_passed,
         "reward_raw": raw,
         "done": reward.get("done") if reward is not None else None,
@@ -244,6 +315,8 @@ def build_result_row(
         "task_url_navigations": int(task_url_navigations),
         "flagged": bool(flagged),
         "invalid_reason": invalid_reason,
+        "attempt": int(attempt),
+        "infra_circuit_break": bool(infra_circuit_break),
     }
 
 
@@ -270,6 +343,25 @@ LEGAL_REWARD_REASON_PREFIXES = ("You clicked on ",)
 #: ``invalid_reason`` 取值（非 null ⇒ 该 cell 判为无效，安全事件）。
 INVALID_REASON_FILE_URL = "file_url_navigation"
 INVALID_REASON_SANDBOX = "sandbox_tool_invoked"
+
+
+def _attempt_circuit_break(result: runner_module.RunResult, *, stdout_log_path: str | Path) -> bool:
+    """C1b attempt-level breaker (spec-r2 §2.2): a fast infra death carrying a 402/connection marker.
+
+    All three conditions must hold: the runner ended in ``timeout``/``no_junit``, the attempt died in
+    under :data:`CIRCUIT_BREAK_DURATION_S`, and the attempt's own ``stdout.log`` contains any of
+    :data:`CIRCUIT_BREAK_MARKERS`.  A breaker row keeps its §1.1 status untouched — it is only kept
+    out of the retry pool so a dead key cannot burn the retry budget.
+    """
+    if result.status not in (runner_module.STATUS_TIMEOUT, runner_module.STATUS_NO_JUNIT):
+        return False
+    if result.duration_s is None or result.duration_s >= CIRCUIT_BREAK_DURATION_S:
+        return False
+    try:
+        text = Path(stdout_log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(marker in text for marker in CIRCUIT_BREAK_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -466,24 +558,35 @@ def start_miniwob_server(
     port: int = DEFAULT_PORT,
     rewards_file: Path,
     host: str = DEFAULT_HOST,
+    terminal_cue: bool = False,
+    single_start: bool = False,
 ) -> subprocess.Popen[str]:
-    """Start the patch server as a sub-process after probing the port (spec §3.1)."""
+    """Start the patch server as a sub-process after probing the port (spec §3.1, spec-r2 §4.1).
+
+    The two r2 flags are server-level: they change which patches are appended to ``core.js`` and
+    never the URL/seed/episode semantics.
+    """
     if probe_port(host, port):
         raise BenchmarkError(f"port {host}:{port} is already in use; free it before the benchmark (the URL is an experiment parameter)")
+    command = [
+        sys.executable,
+        "-m",
+        "record2gherkin.benchmark.miniwob_server",
+        "--root",
+        str(root),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--rewards-file",
+        str(rewards_file),
+    ]
+    if terminal_cue:
+        command.append("--terminal-cue")
+    if single_start:
+        command.append("--single-start")
     process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "record2gherkin.benchmark.miniwob_server",
-            "--root",
-            str(root),
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--rewards-file",
-            str(rewards_file),
-        ],
+        command,
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -543,6 +646,65 @@ def git_rev(repo_root: Path = REPO_ROOT) -> str | None:
 
 
 # ---------------------------------------------------------------------------------------------
+# C5 role routing (spec-r2 §6) + preflight gate (C1c)
+# ---------------------------------------------------------------------------------------------
+
+
+def build_agents_llm_config(*, nav_model: str, base_url: str, api_type: str, planner_model: str = ROLE_ROUTING_PLANNER_MODEL, helper_model: str = ROLE_ROUTING_HELPER_MODEL) -> dict[str, Any]:
+    """The ``ConfigFileLoader``-compatible per-role config (spec-r2 §6.1).
+
+    ``model_api_key`` is **always omitted** (red line): the key reaches the child process through the
+    environment only (``MODEL_API_KEY`` for nav/helper via ``create_chat_model``, ``OPENAI_API_KEY``
+    for the planner's bare ``ChatOpenAI`` — review-r2 M1).
+    """
+
+    def entry(model: str) -> dict[str, Any]:
+        return {
+            "model_name": model,
+            "model_base_url": base_url,
+            "model_api_type": api_type,
+            "llm_config_params": {"temperature": 0.0, "cache_seed": None},
+        }
+
+    return {
+        ROLE_ROUTING_REF_KEY: {
+            "planner_agent": entry(planner_model),
+            "nav_agent": entry(nav_model),
+            "helper_agent": entry(helper_model),
+        }
+    }
+
+
+def write_agents_llm_config(path: Path, config: Mapping[str, Any]) -> Path:
+    """Write the generated config atomically enough for one run and return the path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+    lowered = text.lower()
+    if "model_api_key" in lowered or "sk-" in text:
+        raise BenchmarkError("generated agents_llm_config.json must never contain a key (spec-r2 red line)")
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def role_routing_env(config_path: Path, api_key: str) -> dict[str, str]:
+    """Exactly the four child-env keys of spec-r2 §6.2 (T7: one key more is a failure).
+
+    ``MODEL_API_KEY`` covers nav/helper (``create_chat_model`` fallback); ``OPENAI_API_KEY`` carries
+    the same value for the planner's bare ``ChatOpenAI`` (review-r2 M1).  The key travels through
+    ``subprocess env=`` only — never into a file.
+    """
+    cleaned = (api_key or "").strip()
+    if not cleaned:
+        raise runner_module.RunnerError("empty API key: nothing to inject")
+    return {
+        "AGENTS_LLM_CONFIG_FILE": str(Path(config_path).resolve()),
+        "AGENTS_LLM_CONFIG_FILE_REF_KEY": ROLE_ROUTING_REF_KEY,
+        "MODEL_API_KEY": cleaned,
+        "OPENAI_API_KEY": cleaned,
+    }
+
+
+# ---------------------------------------------------------------------------------------------
 # Orchestrator (spec §7.3/§7.4)
 # ---------------------------------------------------------------------------------------------
 
@@ -564,9 +726,22 @@ class Orchestrator:
         dry_run: bool = False,
         force: bool = False,
         tasks: Sequence[Mapping[str, Any]] | None = None,
+        terminal_cue: bool = False,
+        single_start: bool = False,
+        role_routing: bool = False,
+        nav_model: str = DEFAULT_NAV_MODEL,
+        extra_tools: bool = False,
+        template_notes: bool = False,
+        latency_env: bool = False,
+        smoke_cells: Sequence[str] = (),
     ) -> None:
         if stage not in tasks_module.STAGES:
             raise BenchmarkError(f"unknown stage: {stage!r} (expected one of {tasks_module.STAGES})")
+        smoke = [str(subdomain).strip() for subdomain in smoke_cells if str(subdomain).strip()]
+        if smoke and stage != "pilot":
+            raise BenchmarkError("--smoke-cells is a pilot-only appendix (spec-r2 §4.1)")
+        if len(set(smoke)) != len(smoke):
+            raise BenchmarkError(f"duplicate --smoke-cells entries: {smoke}")
         self.exp_id = exp_id
         self.stage = stage
         self.exp_dir = Path(exp_root) / exp_id
@@ -583,24 +758,59 @@ class Orchestrator:
         self.timeout_s = timeout_s
         self.dry_run = dry_run
         self.force = force
+        self.terminal_cue = bool(terminal_cue)
+        self.single_start = bool(single_start)
+        self.role_routing = bool(role_routing)
+        self.nav_model = str(nav_model)
+        self.extra_tools = bool(extra_tools)
+        self.template_notes = bool(template_notes)
+        self.latency_env = bool(latency_env)
+        self.smoke_subdomains = smoke
+        #: spec-r2 §4.1: every switch lands in the manifest ``flags`` object (headline = all-on).
+        self.flags: dict[str, Any] = {
+            "terminal_cue": self.terminal_cue,
+            "single_start": self.single_start,
+            "role_routing": self.role_routing,
+            "nav_model": self.nav_model,
+            "extra_tools": self.extra_tools,
+            "template_notes": self.template_notes,
+            "latency_env": self.latency_env,
+            "smoke_cells": list(self.smoke_subdomains),
+        }
         self.tasks = [dict(task) for task in tasks] if tasks is not None else tasks_module.load_tasks()
         self.stage_tasks = tasks_module.select_stage(stage, self.tasks)
         self.started_at = _now()
         self.hercules_runs = 0
         self.retries_used = 0
+        self.consecutive_breaks = 0
+        self._routing_config_path: Path | None = None
 
     # -- public entry ------------------------------------------------------------------------
 
     def run(self) -> int:
         """Execute the stage; returns a process exit code."""
-        budget = hercules_budget(self.stage)
+        budget = hercules_budget(self.stage, extra_runs=len(self._smoke_cells_planned()))
         assert_budget(budget["total"])
-        cells = plan_cells(self.exp_id, self.stage, tasks=self.tasks, existing_keys=self._existing_cells(), force=self.force)
+        cells = self._plan_stage_cells()
         if self.dry_run:
             return self._print_plan(cells, budget)
 
+        # spec-r2 §0.1 (C1c): the balance preflight is a hard gate — no server, no cell on failure.
+        preflight_code = self._run_preflight()
+        if preflight_code != 0:
+            return preflight_code
+        if self.role_routing:
+            self._routing_config_path = self._prepare_role_routing()
+
         self.exp_dir.mkdir(parents=True, exist_ok=True)
-        server = start_miniwob_server(root=self.html_root, port=self.port, rewards_file=self.rewards_path, host=self.host)
+        server = start_miniwob_server(
+            root=self.html_root,
+            port=self.port,
+            rewards_file=self.rewards_path,
+            host=self.host,
+            terminal_cue=self.terminal_cue,
+            single_start=self.single_start,
+        )
         try:
             for cell in cells:
                 self._run_cell(cell)
@@ -613,11 +823,78 @@ class Orchestrator:
             self.stage,
             self.hercules_runs,
             self.retries_used,
-            HERCULES_BUDGET_CAP,
+            R2_BUDGET_CAP,
         )
         return 0
 
+    # -- preflight / role routing (C1c / C5) ---------------------------------------------------
+
+    def _run_preflight(self) -> int:
+        """Probe every model this run will use; exit 3 (masked reason) when any probe fails."""
+        try:
+            key = runner_module.read_api_key()
+        except runner_module.RunnerError as exc:
+            logger.error("preflight failed: %s — 请充值或更换可用 key 后重试", exc)
+            return 3
+        models = [runner_module.LLM_MODEL_NAME]
+        if self.role_routing and self.nav_model not in models:
+            models.append(self.nav_model)
+        for model in models:
+            result = preflight_module.probe_llm(api_key=key, model=model, base_url=runner_module.LLM_MODEL_BASE_URL)
+            if not result.ok:
+                logger.error("preflight failed for model %s: %s — 请充值或更换可用 key 后重试", model, result.detail)
+                return 3
+        logger.info("orchestrator: preflight ok for %s", ", ".join(models))
+        return 0
+
+    def _prepare_role_routing(self) -> Path:
+        """Generate ``<exp_dir>/agents_llm_config.json`` (no key inside; spec-r2 §6.1)."""
+        config = build_agents_llm_config(nav_model=self.nav_model, base_url=runner_module.LLM_MODEL_BASE_URL, api_type=runner_module.LLM_MODEL_API_TYPE)
+        return write_agents_llm_config(self.exp_dir / AGENTS_LLM_CONFIG_FILENAME, config)
+
+    def _child_extra_env(self) -> dict[str, str]:
+        """Merged ``extra_env`` of every enabled r2 flag (spec-r2 §5.3/§6.2/§7.1)."""
+        extra: dict[str, str] = {}
+        if self.latency_env:
+            extra.update(LATENCY_ENV_OVERRIDES)
+        if self.extra_tools:
+            extra["LOAD_EXTRA_TOOLS"] = "true"
+        if self.role_routing and self._routing_config_path is not None:
+            extra.update(role_routing_env(self._routing_config_path, runner_module.read_api_key()))
+        return extra
+
     # -- plan / resume -----------------------------------------------------------------------
+
+    def _smoke_cells_planned(self, existing_keys: Sequence[tuple[str, int]] = ()) -> list[Cell]:
+        """Named ``--smoke-cells`` appendix cells (spec-r2 §4.1, review-r2 M3): pilot order + these."""
+        done = set() if self.force else {(str(task_id), int(seed)) for task_id, seed in existing_keys}
+        cells: list[Cell] = []
+        stage_ids = {task["task_id"] for task in self.stage_tasks}
+        for subdomain in self.smoke_subdomains:
+            matches = [task for task in self.tasks if str(task["subdomain"]) == subdomain]
+            if not matches:
+                raise BenchmarkError(f"smoke cell not in the task table: {subdomain!r}")
+            task = matches[0]
+            task_id = str(task["task_id"])
+            seed = tasks_module.derive_seed(self.exp_id, task_id)
+            if task_id in stage_ids or (task_id, seed) in done:
+                continue  # already part of the stage plan or already recorded — idempotent appendix
+            cells.append(
+                Cell(
+                    task_id=task_id,
+                    subdomain=str(task["subdomain"]),
+                    family=str(task["family"]),
+                    visual=bool(task["visual"]),
+                    seed=seed,
+                )
+            )
+        return cells
+
+    def _plan_stage_cells(self) -> list[Cell]:
+        """Stage cells (resume-aware) plus the smoke appendix, in that deterministic order."""
+        existing = self._existing_cells()
+        cells = plan_cells(self.exp_id, self.stage, tasks=self.tasks, existing_keys=existing, force=self.force)
+        return cells + self._smoke_cells_planned(existing)
 
     def _existing_cells(self) -> list[tuple[str, int]]:
         """``(task_id, seed)`` pairs already present in ``results.jsonl`` (spec §7.3 断点跳过)."""
@@ -650,9 +927,9 @@ class Orchestrator:
     # -- one cell ----------------------------------------------------------------------------
 
     def _assert_can_run(self) -> None:
-        limit = tasks_module.STAGE_RUNS[self.stage] + RETRY_BUDGET[self.stage]
-        if self.hercules_runs >= min(limit, HERCULES_BUDGET_CAP):
-            raise BenchmarkError(f"budget breach: refusing Hercules run {self.hercules_runs + 1} (stage limit {limit}, cap {HERCULES_BUDGET_CAP})")
+        limit = tasks_module.STAGE_RUNS[self.stage] + RETRY_BUDGET[self.stage] + len(self.smoke_subdomains)
+        if self.hercules_runs >= min(limit, R2_BUDGET_CAP):
+            raise BenchmarkError(f"budget breach: refusing Hercules run {self.hercules_runs + 1} (stage limit {limit}, cap {R2_BUDGET_CAP})")
 
     def _run_cell(self, cell: Cell) -> dict[str, Any]:
         started_at = _now()
@@ -677,6 +954,7 @@ class Orchestrator:
                 started_at=started_at,
                 finished_at=_now(),
                 model=runner_module.LLM_MODEL_NAME,
+                attempt=self._attempt_no(cell),
             )
             self._append_row(row)
             logger.warning("orchestrator: %s -> no_goal (%s)", cell.label, exc)
@@ -685,10 +963,18 @@ class Orchestrator:
         row = self._execute_cell(cell, goal=goal, started_at=started_at, started=started)
         self._append_row(row)
         logger.info("orchestrator: %s -> %s (%.1fs, reward=%s)", cell.run_id, row["status"], time.monotonic() - started, row["reward_raw"])
+        # spec-r2 §2.2 run-level breaker: two consecutive infra-break rows abort the stage (exit 2).
+        if row.get("infra_circuit_break") is True:
+            self.consecutive_breaks += 1
+            if self.consecutive_breaks >= CIRCUIT_BREAK_RUN_LIMIT:
+                raise BenchmarkError(f"circuit breaker: {self.consecutive_breaks} consecutive infra breaks (402/balance/connection); aborting the stage, recorded rows are kept")
+        else:
+            self.consecutive_breaks = 0
         return row
 
     def _execute_cell(self, cell: Cell, *, goal: str, started_at: str, started: float) -> dict[str, Any]:
         self._assert_can_run()
+        attempt_no = self._attempt_no(cell)
         feature_text = goal_reader.render_feature(
             task_id=cell.task_id,
             subdomain=cell.subdomain,
@@ -696,6 +982,8 @@ class Orchestrator:
             port=self.port,
             episode_ms=self.episode_ms,
             goal=goal,
+            notes=self.template_notes,
+            notes_terminal_cue=self.template_notes and self.terminal_cue,
         )
         self.features_dir.mkdir(parents=True, exist_ok=True)
         (self.features_dir / f"{cell.run_id}.feature").write_text(feature_text, encoding="utf-8")
@@ -704,12 +992,23 @@ class Orchestrator:
         feature_path = project_root / "input" / f"{cell.run_id}.feature"
         feature_path.write_text(feature_text, encoding="utf-8")
 
+        attempt_log_path = self._stdout_log_path(cell, attempt=attempt_no)
         self.hercules_runs += 1
-        result = runner_module.run_feature(feature_path, run_id=cell.run_id, project_root=project_root, timeout_s=self.timeout_s)
+        result = runner_module.run_feature(
+            feature_path,
+            run_id=cell.run_id,
+            project_root=project_root,
+            timeout_s=self.timeout_s,
+            extra_env=self._child_extra_env() or None,
+            stdout_log_path=attempt_log_path,
+        )
         junit_passed, junit_terminate = _junit_verdict(result)
         reward = fetch_reward(self.base_url, task=cell.subdomain, seed=cell.seed)
         finished_at = _now()
-        scan = self._scan_cell(cell, started_at=started_at, finished_at=finished_at)
+        broken = _attempt_circuit_break(result, stdout_log_path=attempt_log_path)
+        if broken:
+            logger.warning("orchestrator: %s attempt %s circuit-broken (fast infra death with a 402/connection marker)", cell.label, attempt_no)
+        scan = self._scan_cell(cell, attempt=attempt_no, started_at=started_at, finished_at=finished_at)
         return build_result_row(
             task=self._task_for(cell.task_id),
             seed=cell.seed,
@@ -730,21 +1029,25 @@ class Orchestrator:
             task_url_navigations=scan.task_url_navigations,
             flagged=scan.flagged,
             invalid_reason=scan.invalid_reason,
+            attempt=attempt_no,
+            infra_circuit_break=broken,
         )
 
     # -- cell integrity scan (安全审查 R1 §4.2/§4.3) ------------------------------------------
 
-    def _stdout_log_path(self, cell: Cell) -> Path:
-        """The already-written child log (``runs/<run_id>/stdout.log``, spec §4.2/§7.4)."""
-        return self.runs_dir / cell.run_id / "stdout.log"
+    def _stdout_log_path(self, cell: Cell, *, attempt: int = 1) -> Path:
+        """This attempt's child log (``runs/<run_id>/attempt<N>/stdout.log``, spec-r2 §2.1)."""
+        return self.runs_dir / cell.run_id / f"attempt{max(1, int(attempt))}" / "stdout.log"
 
-    def _scan_cell(self, cell: Cell, *, started_at: str | None = None, finished_at: str | None = None) -> CellScan:
+    def _scan_cell(self, cell: Cell, *, attempt: int = 1, started_at: str | None = None, finished_at: str | None = None) -> CellScan:
         """H2 + H3 for one cell, both over artefacts that are already on disk (no network, no browser).
 
-        A flagged cell is disclosed on the row and logged; only the V5/V6 security events make it
-        invalid (``invalid_reason``) — the official reward and ``status`` are never rewritten.
+        H2 reads only this attempt's log (C1d); the H3 window filter already isolates this attempt's
+        reward records.  A flagged cell is disclosed on the row and logged; only the V5/V6 security
+        events make it invalid (``invalid_reason``) — the official reward and ``status`` are never
+        rewritten.
         """
-        log_scan = scan_cell_log(self._stdout_log_path(cell), subdomain=cell.subdomain, seed=cell.seed)
+        log_scan = scan_cell_log(self._stdout_log_path(cell, attempt=attempt), subdomain=cell.subdomain, seed=cell.seed)
         reward_scan = scan_cell_rewards(
             self.rewards_path,
             subdomain=cell.subdomain,
@@ -777,19 +1080,39 @@ class Orchestrator:
                 return dict(task)
         raise BenchmarkError(f"task not in the table: {task_id}")
 
+    def _attempt_no(self, cell: Cell) -> int:
+        """``<existing rows for this cell> + 1`` (spec-r2 §2.1): attempt 1 without retries."""
+        count = 0
+        if self.results_path.is_file():
+            for row in metrics_module.load_rows(self.results_path):
+                seed = row.get("seed")
+                if str(row.get("task_id")) == cell.task_id and seed == cell.seed and isinstance(seed, int) and not isinstance(seed, bool):
+                    count += 1
+        return count + 1
+
     # -- retries / manifest ------------------------------------------------------------------
 
     def _retry_infrastructure_failures(self) -> None:
-        """Re-run infrastructure cells (timeout/no_junit/no_reward) once each, within the retry buffer."""
+        """Re-run infrastructure cells (timeout/no_junit/no_reward) once each, within the retry buffer.
+
+        spec-r2 §2.2: circuit-broken rows (fast 402/connection deaths) are explicitly excluded —
+        retrying them would only burn the buffer against a dead key.  Smoke appendix cells
+        (``--smoke-cells``) never retry either (spec-r2 §4.1).
+        """
         retry_budget = RETRY_BUDGET[self.stage]
         if retry_budget <= 0 or not self.results_path.is_file():
             return
+        smoke_keys = {(cell.task_id, cell.seed) for cell in self._smoke_cells_planned()}
         attempts: dict[tuple[str, int], int] = {}
+        broken_keys: set[tuple[str, int]] = set()
         for row in metrics_module.load_rows(self.results_path):
             seed = row.get("seed")
             if not isinstance(seed, int) or isinstance(seed, bool):
                 continue
-            attempts[(str(row.get("task_id")), seed)] = attempts.get((str(row.get("task_id")), seed), 0) + 1
+            key = (str(row.get("task_id")), seed)
+            attempts[key] = attempts.get(key, 0) + 1
+            if row.get("infra_circuit_break") is True:
+                broken_keys.add(key)
         infra_cells: list[Cell] = []
         for row in metrics_module.load_rows(self.results_path):
             if row.get("status") not in INFRA_STATUSES:
@@ -797,7 +1120,13 @@ class Orchestrator:
             seed = row.get("seed")
             if not isinstance(seed, int) or isinstance(seed, bool):
                 continue
-            if attempts.get((str(row.get("task_id")), seed), 0) > INFRA_RETRY_LIMIT_PER_CELL:
+            key = (str(row.get("task_id")), seed)
+            if key in broken_keys:
+                logger.info("orchestrator: %s is circuit-broken, excluded from the retry pool", key[0])
+                continue
+            if key in smoke_keys:
+                continue
+            if attempts.get(key, 0) > INFRA_RETRY_LIMIT_PER_CELL:
                 continue
             try:
                 cell = self._cell_for(str(row.get("task_id")), seed)
@@ -842,12 +1171,13 @@ class Orchestrator:
             "server_port": self.port,
             "episode_max_time_ms": self.episode_ms,
             "timeout_s": self.timeout_s,
+            "flags": dict(self.flags),
             "budget": {
                 "hercules_used": self.hercules_runs,
                 "retries_used": self.retries_used,
                 "stage_plan": tasks_module.STAGE_RUNS[self.stage],
                 "retry_budget": RETRY_BUDGET[self.stage],
-                "cap": HERCULES_BUDGET_CAP,
+                "cap": R2_BUDGET_CAP,
             },
             "cells": [{"task_id": cell.task_id, "seed": cell.seed} for cell in plan_cells(self.exp_id, self.stage, tasks=self.tasks, force=True)],
             "metrics": summary.as_dict(),
@@ -872,10 +1202,10 @@ def _junit_verdict(result: runner_module.RunResult) -> tuple[bool | None, str | 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="MiniWoB++ benchmark orchestration (spec §7)")
+    parser = argparse.ArgumentParser(description="MiniWoB++ benchmark orchestration (spec §7, spec-r2 §4.1)")
     parser.add_argument("--exp-id", required=True)
     parser.add_argument("--stage", required=True, choices=list(tasks_module.STAGES))
-    parser.add_argument("--dry-run", action="store_true", help="print the cell plan and the budget without touching anything")
+    parser.add_argument("--dry-run", action="store_true", help="print the cell plan and the budget without touching anything (skips the C1c preflight)")
     parser.add_argument("--force", action="store_true", help="ignore existing results.jsonl rows and re-plan every cell")
     parser.add_argument("--exp-root", default=str(DEFAULT_EXP_ROOT))
     parser.add_argument("--html-root", default=str(MINIWOB_HTML_ROOT))
@@ -883,6 +1213,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--episode-ms", type=int, default=tasks_module.EPISODE_MAX_TIME_MS_DEFAULT)
     parser.add_argument("--timeout-s", type=int, default=DEFAULT_TIMEOUT_S)
+    # -- r2 switch set (spec-r2 §4.1); all default off, headline turns them on explicitly ----------
+    parser.add_argument("--terminal-cue", action="store_true", help="C2: serve core.js with the neutral EPISODE ENDED terminal cue")
+    parser.add_argument("--single-start", action="store_true", help="C3: auto-start the episode at most once per tab")
+    parser.add_argument("--role-routing", action="store_true", help="C5: per-role model routing (generates agents_llm_config.json, key stays in env)")
+    parser.add_argument("--nav-model", default=DEFAULT_NAV_MODEL, help="C5: the routed nav/executor model name (probed by the C1c preflight)")
+    parser.add_argument("--extra-tools", action="store_true", help="C6: load extra_tools in the child (drag_and_drop etc., LOAD_EXTRA_TOOLS=true)")
+    parser.add_argument("--template-notes", action="store_true", help="C7: append the fixed context notes block to the generated feature")
+    parser.add_argument("--latency-env", action="store_true", help="C4f: inject the latency pack env (timeout/retries/refresh mode/round cap/step budget)")
+    parser.add_argument("--smoke-cells", default="", help="comma-separated subdomains appended to the pilot plan (pilot only, never retried)")
     args = parser.parse_args(argv)
 
     try:
@@ -897,6 +1236,14 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.timeout_s,
             dry_run=args.dry_run,
             force=args.force,
+            terminal_cue=args.terminal_cue,
+            single_start=args.single_start,
+            role_routing=args.role_routing,
+            nav_model=args.nav_model,
+            extra_tools=args.extra_tools,
+            template_notes=args.template_notes,
+            latency_env=args.latency_env,
+            smoke_cells=[cell for cell in args.smoke_cells.split(",") if cell.strip()],
         )
         return orchestrator.run()
     except (BenchmarkError, tasks_module.BenchmarkError, runner_module.RunnerError) as exc:

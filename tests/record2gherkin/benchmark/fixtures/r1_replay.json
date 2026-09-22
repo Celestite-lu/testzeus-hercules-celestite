@@ -1,0 +1,632 @@
+{
+  "source": "dev_runs/benchmark/miniwob-r1/results.jsonl (130 rows, last-wins per task_id -> 125 cells)",
+  "exp_id": "miniwob-r1",
+  "rule": "spec-r2 §1.1 C1a: raw>0 outranks infra; runner_status is the r1-priority status of the row",
+  "r1_official_total": 54,
+  "r2_official_total": 59,
+  "cases": [
+    {
+      "task_id": "miniwob.login-user-popup",
+      "kind": "rescue",
+      "runner_status": "timeout",
+      "reward_present": true,
+      "raw": 1.0,
+      "junit_passed": null,
+      "r1_status": "timeout",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.multi-layouts",
+      "kind": "rescue",
+      "runner_status": "timeout",
+      "reward_present": true,
+      "raw": 1.0,
+      "junit_passed": null,
+      "r1_status": "timeout",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.use-colorwheel-2",
+      "kind": "rescue",
+      "runner_status": "timeout",
+      "reward_present": true,
+      "raw": 0.5372549019607844,
+      "junit_passed": null,
+      "r1_status": "timeout",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.click-pie",
+      "kind": "rescue",
+      "runner_status": "no_junit",
+      "reward_present": true,
+      "raw": 1.0,
+      "junit_passed": null,
+      "r1_status": "no_junit",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.click-collapsible-2-nodelay",
+      "kind": "rescue",
+      "runner_status": "no_junit",
+      "reward_present": true,
+      "raw": 1.0,
+      "junit_passed": null,
+      "r1_status": "no_junit",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.email-inbox-delete",
+      "kind": "counterexample",
+      "runner_status": "timeout",
+      "reward_present": true,
+      "raw": -1.0,
+      "junit_passed": null,
+      "r1_status": "timeout",
+      "expect_status": "timeout",
+      "expect_official_passed": false
+    },
+    {
+      "task_id": "miniwob.book-flight",
+      "kind": "consistent",
+      "runner_status": "passed",
+      "reward_present": true,
+      "raw": 1.0,
+      "junit_passed": true,
+      "r1_status": "official_passed",
+      "expect_status": "official_passed",
+      "expect_official_passed": true
+    },
+    {
+      "task_id": "miniwob.ascending-numbers",
+      "kind": "consistent",
+      "runner_status": "failed",
+      "reward_present": true,
+      "raw": -1.0,
+      "junit_passed": false,
+      "r1_status": "official_failed",
+      "expect_status": "official_failed",
+      "expect_official_passed": false
+    },
+    {
+      "task_id": "miniwob.drag-cube",
+      "kind": "consistent",
+      "runner_status": "failed",
+      "reward_present": false,
+      "raw": null,
+      "junit_passed": true,
+      "r1_status": "no_reward",
+      "expect_status": "no_reward",
+      "expect_official_passed": false
+    },
+    {
+      "task_id": "miniwob.click-pie-nodelay",
+      "kind": "infra",
+      "runner_status": "timeout",
+      "reward_present": true,
+      "raw": -1.0,
+      "junit_passed": null,
+      "r1_status": "timeout",
+      "expect_status": "timeout",
+      "expect_official_passed": false
+    },
+    {
+      "task_id": "miniwob.click-collapsible-2",
+      "kind": "infra",
+      "runner_status": "no_junit",
+      "reward_present": true,
+      "raw": -1.0,
+      "junit_passed": null,
+      "r1_status": "no_junit",
+      "expect_status": "no_junit",
+      "expect_official_passed": false
+    }
+  ],
+  "summary_125": [
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -0.3333333333333333
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "no_junit",
+      -1.0
+    ],
+    [
+      "no_junit",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      null,
+      null
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "no_junit",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "no_junit",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      null
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      null
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      null,
+      null
+    ],
+    [
+      null,
+      null
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      null,
+      null
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      1.0
+    ],
+    [
+      "timeout",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      null
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "timeout",
+      0.5372549019607844
+    ],
+    [
+      "passed",
+      1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "failed",
+      -1.0
+    ],
+    [
+      "timeout",
+      -1.0
+    ]
+  ]
+}

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from record2gherkin.benchmark.miniwob_server import (
     AUTO_START_PATCH,
+    AUTO_START_PATCH_SINGLE,
     REWARD_HOOK_PATCH,
     MiniWobServer,
     PortInUseError,
@@ -158,3 +159,79 @@ def test_healthz_reports_root_patch_flag_and_reward_count(miniwob_server: MiniWo
     )
     _, health = http_get_json(f"{miniwob_server.base_url}/healthz")
     assert health["rewards"] == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# r2 T5(e)/T6(d)：补丁层离线字节断言（spec-r2 §4.1-§4.3）
+# ---------------------------------------------------------------------------------------------
+
+
+def test_t5e_off_flags_reproduce_the_r1_bytes(html_root: Path) -> None:
+    """T5(e)/T6(d) 前置：两个 r2 flag 全 off → ``patch_core_js`` 输出与 r1 逐字节一致、无新标记。"""
+    source = (html_root / "core" / "core.js").read_bytes()
+    r1_bytes = source + f"\n{AUTO_START_PATCH}\n{REWARD_HOOK_PATCH}\n".encode("utf-8")
+    for kwargs in ({}, {"terminal_cue": False, "single_start": False}):
+        assert patch_core_js(source, **kwargs) == r1_bytes
+    text = patch_core_js(source).decode("utf-8")
+    assert "__R2G_PATCH_SINGLE_START__" not in text
+    assert "__R2G_TERMINAL_CUE__" not in text
+    assert "sessionStorage" not in text
+    assert "EPISODE ENDED" not in text
+
+
+def test_t6d_single_variant_differs_from_patch_a_in_exactly_three_places() -> None:
+    """T6(d)：single 变体相对现状补丁 A 恰三处不同（标记行 / 新增① / 新增②），其余逐字节一致。"""
+    import difflib
+
+    a_lines = AUTO_START_PATCH.splitlines(keepends=True)
+    s_lines = AUTO_START_PATCH_SINGLE.splitlines(keepends=True)
+    matcher = difflib.SequenceMatcher(None, a_lines, s_lines, autojunk=False)
+    ops = [op for op in matcher.get_opcodes() if op[0] != "equal"]
+    kinds = [op[0] for op in ops]
+    assert kinds == ["replace", "insert", "insert"], kinds
+
+    tag, a1, a2, s1, s2 = ops[0]
+    assert tag == "replace" and a2 - a1 == 1 and s2 - s1 == 1  # 标记行
+    assert "__R2G_PATCH_START__" in "".join(a_lines[a1:a2]) and "__R2G_PATCH_SINGLE_START__" in "".join(s_lines[s1:s2])
+
+    tag, a1, a2, s1, s2 = ops[1]
+    assert tag == "insert" and a1 == a2  # 新增①：拦截分支（M2 加固）
+    guard = "".join(s_lines[s1:s2])
+    assert 'sessionStorage.getItem("r2g_started") !== null' in guard
+    assert "core.startEpisodeReal = function () {};" in guard
+    assert "core.startEpisode = function () {};" in guard
+    assert "core.updateDisplay = function () {};" in guard
+    assert '"#reward-display, #sync-task-cover { display: none !important; }"' in guard
+    assert "return;" in guard
+
+    tag, a1, a2, s1, s2 = ops[2]
+    assert tag == "insert" and a1 == a2  # 新增②：开局成功登记
+    setitem = "".join(s_lines[s1:s2])
+    assert 'sessionStorage.setItem("r2g_started", seed);' in setitem
+
+    # 开局成功分支的安全加固四行逐字保留（H1），且成功分支仍在新增② 之前
+    for line in HARDENING_PATCH_LINES:
+        assert line in AUTO_START_PATCH_SINGLE
+    single = AUTO_START_PATCH_SINGLE
+    assert single.index("core.startEpisodeReal();") < single.index('sessionStorage.setItem("r2g_started", seed);')
+    assert single.index("core.updateDisplay = function () {}; /* 终局不回写 HUD 文本 */") < single.index("clearInterval(timer);")
+
+
+def test_t6d_patch_composition_order_and_markers(html_root: Path) -> None:
+    """T6(d)/T5(e)：补丁顺序 = 原文 → 补丁A(single) → REWARD_HOOK → TERMINAL_CUE；标记齐全。"""
+    source = (html_root / "core" / "core.js").read_bytes()
+    text = patch_core_js(source, terminal_cue=True, single_start=True).decode("utf-8")
+    assert text.startswith(source.decode("utf-8"))
+    i_single = text.index("/* __R2G_PATCH_SINGLE_START__ */")
+    i_hook = text.index("/* __R2G_REWARD_HOOK__ */")
+    i_cue = text.index("/* __R2G_TERMINAL_CUE__ */")
+    assert i_single < i_hook < i_cue
+
+    from record2gherkin.benchmark.miniwob_server import TERMINAL_CUE_PATCH
+
+    assert AUTO_START_PATCH_SINGLE in text and REWARD_HOOK_PATCH in text and TERMINAL_CUE_PATCH in text
+    # 两个 wrapper 都包 core.endEpisode：REWARD_HOOK 在 TERMINAL_CUE 之前 —— chain 顺序与叠加断言一致
+    assert text.count("var orig = core.endEpisode;") == 2
+    # 单独 flag 组合的标记
+    assert "__R2G_TERMINAL_CUE__" not in patch_core_js(source, single_start=True).decode("utf-8")
+    assert "__R2G_PATCH_SINGLE_START__" not in patch_core_js(source, terminal_cue=True).decode("utf-8")

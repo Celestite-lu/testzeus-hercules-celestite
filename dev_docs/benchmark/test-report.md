@@ -222,3 +222,90 @@ login-user  回合内/终局后均: "Enter the username \"tora\" and the passwor
 - **P1-5 上游产品建议只记录不实施**（超出本次范围、且按约定不动 `testzeus_hercules/`）：`open_url` 增加 scheme 白名单（仅 http/https，根除 V5）；`execute_python_sandbox` 增加环境开关（如 `SANDBOX_DISABLED=1` 直接拒执行）并由 orchestrator 经 `run_feature(extra_env=...)` 注入（根除 V6）。V6 的机制性结论（restricted 档非安全边界）未变，只能靠 H2③ 检测 + 披露。
 - full 报告需按口径 5/6/7 逐行披露 `flagged`/`invalid_reason` 的计数与名单（含 pilot 的 V4 计数），并说明本节的两处字面偏差。
 
+
+## 12. r2 实现补记（spec-r2 / review-r2 M1–M5 全部落地；2026-09-22）
+
+### 12.1 测试命令与结果（离线全绿）
+
+```
+uv run pytest tests/record2gherkin/benchmark -q        # 117 passed（基线 75 + r2 新增 42）
+uv run pytest tests/record2gherkin -q                  # 409 passed（基线 367 + 42）
+uv run pytest tests/test_simple_hercules_langgraph.py -q  # 12 passed（引擎守卫回归，默认 off）
+make fmt / black --check（testzeus_hercules/ tests/ record2gherkin 三个目录）  # CLEAN
+```
+
+浏览器组（T5/T6）在本机 chromium 实跑通过（回环伺服器，无外网）；`SKIP_BROWSER_TESTS=1` 时整组自动跳过。
+
+### 12.2 T1 回放锁 +5 实测输出（判分修复可回放性证明）
+
+fixture：`tests/record2gherkin/benchmark/fixtures/r1_replay.json`（由 `dev_runs/benchmark/miniwob-r1/results.jsonl` 130 行 last-wins 去重为 125 格固化，只含 `(runner_status, raw)` 判定输入，无 key、无长文本）。
+
+- 5 个救援格翻正为 `official_passed`（`runner_status` 披露键保留 infra 状态）：
+
+```
+login-user-popup            timeout raw=1.0    -> official_passed
+multi-layouts               timeout raw=1.0    -> official_passed
+use-colorwheel-2            timeout raw=0.5372549019607844 -> official_passed
+click-pie                   no_junit raw=1.0   -> official_passed
+click-collapsible-2-nodelay no_junit raw=1.0   -> official_passed
+```
+
+- 反例锁定：`email-inbox-delete`（r1 终态 `timeout / raw=-1.0 / task_url_navigations=8`）→ `status=timeout`（**非** `official_passed`；按 §1.1 落 infra 状态，metrics 判 0——review-r2 M5-1 口径，非 `official_failed` 字面值）。
+- 一致格/infra 格不变：`book-flight`(passed)、`ascending-numbers`(official_failed)、`drag-cube`(no_reward)、`click-pie-nodelay`(timeout, raw=-1)、`click-collapsible-2`(no_junit, raw=-1)。
+- 全量摘要重算：对 fixture 内 125 行 `(runner_status, raw)` 重跑新旧两条优先级链，官方合计 **54 → 59（+4.0pp，锁定值）**，与 plan-r2 §C1a 及 review-r2 §5 独立复算一致。
+
+### 12.3 引擎侧改动清单（默认 off 与 r1 行为一致）
+
+| 文件 | 改动 | 默认行为 |
+|---|---|---|
+| `testzeus_hercules/config.py` | env 映射 + setdefault 注册 `BROWSER_STATE_REFRESH_MODE="always"`、`BROWSER_NAV_MAX_CHAT_ROUND="50"`、`NAV_STEP_TIME_BUDGET_S="0"` | r1 原值 |
+| `testzeus_hercules/core/runner.py` | `BaseRunner.__init__` 的 `browser_nav_max_chat_round` 缺省改从 config 读取（函数体内取值，review-r2 §4.c；未配置/非法/≤0 回落 50） | 50，不变 |
+| `testzeus_hercules/core/simple_hercules.py` | C4a：`_requires_state_refresh` 模式化（markers 恒打断；`markers_only` 下成功状态变更不打断；非法/空值回落 `always`）；C4b：`_run_nav_agent` 轮循环顶部步级预算（超限带进展返回 `[NAV_STEP_BUDGET_EXHAUSTED] …`，非异常）；提取 `_last_assistant_content`（max-rounds 返回文本逐字不变） | `always`/0 → r1 行为 |
+| `testzeus_hercules/core/agents/browser_nav_agent.py` | C4c/d prompt 包：rule 8 重感知放宽、L55/L116 刷新教学撤销替换、末尾输出克制句（文本改动，按 spec §5.2 无开关） | prompt 文本 |
+| `testzeus_hercules/core/agents/high_level_planner_agent.py` | C4e prompt 包：Closure Nudge 与 Critical Rule 5 换为 closure 修正句、删 Platform Awareness/Test Data Focus/Executor Operation Detection 章节、`_json_instruction` 删重复 terminate 规则、加禁重导航句与输出克制句 | prompt 文本 |
+
+默认 off 证明：T9 四组断言（markers_only/always/未配置/非法值/空串/大小写归一；预算超限与 0/未配置）+ `tests/test_simple_hercules_langgraph.py` 12 passed + `tests/record2gherkin` 409 passed。spec §9.2 要求的两个引擎 commit（§5.1 引擎代码 / §5.2 prompt 包）按文件组天然可分，git 操作由总编排执行。
+
+### 12.4 harness 侧改动清单（record2gherkin）
+
+- `benchmark/orchestrator.py`：C1a 判分重排 + 行键 `runner_status`/`attempt`/`infra_circuit_break`（schema 见 `metrics.ROW_KEYS`，三键零进分母，T2）；C1b 熔断器（attempt 级三条件 + run 级连续 2 格 `BenchmarkError`，重试池显式排除熔断行与 smoke 格，T3）；C1c 预检 gate（exit 3，不启服务不执行，T4）；C1d `attempt<N>/stdout.log` 分目录（T10）；C5 路由配置生成（`<exp_dir>/agents_llm_config.json` 永不含 key）+ 恰四键 env 注入（T7）；C6 `--extra-tools`/`--smoke-cells`（pilot 专属追加格，不进重试池，预算计入，T11）；C7 `--template-notes` 两变体；`R2_BUDGET_CAP=144`（F21 更新）；manifest 新增 `flags`（T11）。
+- `benchmark/preflight.py`（新）：1-token 探测，transport 与引擎同栈（ChatOpenAI 直连 base_url，review-r2 M4），detail 全过 `mask_secret`，零文件写。
+- `benchmark/miniwob_server.py`：`AUTO_START_PATCH_SINGLE`（由现状补丁 A 程序化派生，恰三处不同：标记行/新增①拦截分支含 M2 加固/新增②登记，T6d 字节断言）；`TERMINAL_CUE_PATCH`（恒定中性文本）；补丁顺序 原文→A(single)→REWARD_HOOK→TERMINAL_CUE；两 flag 全 off 时输出与 r1 逐字节一致（T5e）。
+- `benchmark/goal_reader.py`：`render_feature(notes=, notes_terminal_cue=)` 注释段两变体（T8）；`evaluation/runner.py`：`run_feature(stdout_log_path=)`（None 时路径不变，T10）。
+
+### 12.5 总编排执行 r2 的完整命令（全开 flag 组合）
+
+```bash
+# 0) 预检/预演（dry-run 天然跳过 C1c 预检，不进程不写文件）
+uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-r2 --stage full --dry-run \
+  --terminal-cue --single-start --role-routing --nav-model deepseek-flash --extra-tools --template-notes --latency-env
+
+# 1) 冒烟 pilot + drag 冒烟：14 次执行 = pilot 10 + 重试 2 + smoke 2（drag-items/drag-box 不重试）
+uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-r2 --stage pilot \
+  --terminal-cue --single-start --role-routing --nav-model deepseek-flash \
+  --extra-tools --template-notes --latency-env --smoke-cells drag-items,drag-box
+
+# 2) headline full（用户确认充值、C1c 预检通过后）：125 + 重试 5 = 130，预算 cap 144 硬拦
+uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-r2 --stage full \
+  --terminal-cue --single-start --role-routing --nav-model deepseek-flash \
+  --extra-tools --template-notes --latency-env
+```
+
+非 dry-run 启动即做 C1c 预检（planner 模型 + role-routing 时的 nav 模型，各 1 token）：402/余额/连接异常 → exit 3、不启动伺服器、不执行任何 cell。断点续跑同命令即可（已有 `(task_id, seed)` 行自动跳过）；`--force` 关闭跳过。
+
+### 12.6 已知问题与实现口径（10 条，均不阻塞核心目标）
+
+1. **`runner_status` 行键取值**：实现为"该行在 r1 优先级链下的 status"（域 = `timeout|no_junit|no_reward|official_passed|official_failed|None`，no_goal 为 None）——与 spec §1.1 的值域枚举及 review-r2 M5-1"该行实为 runner_status=timeout"的表述一致，救援格审计方式为 `status != runner_status`。
+2. **disagreement 语义**：按 spec"语义不变"保留原表达式；C1a 救援行使该行新进入两态计算，`junit_passed=None` 时表达式落 `False`（r1 上游既有怪癖，r1 中不可能出现此行形）。
+3. **C4e"`_json_instruction` 的重复 terminate 规则"删除点**：删单条 *"Set \"terminate\": \"yes\" ONLY after a helper has confirmed the task is done"*（closure 门控已由改写后的 closure 句承担），保留通用句 *"Set \"terminate\": \"no\" when you still have steps to execute"*。
+4. **C7 开关参数命名**：spec 只点名 `notes_terminal_cue`；T8 要求两变体，故实现为 `notes: bool`（基础注释段）+ `notes_terminal_cue: bool`（第 5 行，须与 C2 同开，orchestrator 侧联动）。
+5. **熔断 marker `"402"` 为裸子串匹配**（spec 逐字）：任何 stdout 出现 `402` 即命中——误报方向只会"少重试/多熔断"，不判分、不洗白，偏保守可接受。
+6. **`--smoke-cells` 预算口径**：`hercules_budget` 的 smoke 计数取"声明的追加格"而非"断点跳过后实际将跑的格"，预算作为计划数上限偏保守。
+7. **`make fmt` 全仓副作用（披露）**：仓库既有 7 个文件存在 black 基线漂移（历史以默认 88 列格式化），`make fmt`（Makefile 全仓目标）一并重排：`base_nav_agent.py`、`multimodal_base_nav_agent.py`、`config_env_loader.py`、`state_handler.py`、`litellm_helper.py`、`simple_hercules.py`/`runner.py` 的大部分行、`tests/test_simple_hercules_langgraph.py`——纯格式行合并，无语义变化（上述引擎测试全绿佐证）。
+8. **spec §9.2 的"两个引擎 commit"**：git 操作属总编排；实现按 commit1 = `config.py`+`core/runner.py`+`simple_hercules.py`（C4a/b）、commit2 = 两个 prompt 文件（C4c/d/e）分组，可分别提交、各自可 revert 而不破坏 harness 测试。
+9. **C1c 真实预检未执行**（任务边界：不跑真 LLM）：单测 T4 以 monkeypatch `ChatOpenAI.invoke` 覆盖成功/402/连接三路与脱敏；真实一次预检由总编排充值后执行（任一非 dry-run 命令的启动期自动完成）。
+10. **ablation 运行机制未实现**（`--run-cap`、任意 cell 子集、retry=0 语义）：沿 review-r2 §4.a"另批事项"结论，本轮 Out of Scope。
+
+### 12.7 脱敏红线复核
+
+`KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" record2gherkin tests dev_docs` 零命中；T7 断言生成的 `agents_llm_config.json` 无 `model_api_key`/`sk-`（写盘函数对含 key 配置直接抛 `BenchmarkError`）；T4 断言预检失败日志含脱敏原因与"充值"提示且不含 key 实值。
