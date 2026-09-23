@@ -21,6 +21,8 @@
 
 ## 决策日志（全量）
 
+- 2026-09-23（配速调整）：用户确认 GLM coding plan 额度消耗低于预期，r3 起 chunk 上限翻倍（第二段不设上限跑完），后续轮次默认单段 140 格级、以 429 熔断为兜底而非人为截断。
+
 - 2026-09-22（r1 分析）：架构反思关键发现——①延迟元凶是 executor 强制重感知双倍轮次而非 planner 轮次（超时格 51.3 轮 vs 通过格 19.9）；②HUD 加固移除了 agent 可见的成功信号→页面已过后空转到超时（r2 修复方向：终局信号回供或判分优先）；③重导航治理双方案（sessionStorage 单次开局 + prompt 撤销"刷新"教学）。9 假设见 analysis-r1-architecture.md，主推组合预期 50-56%。
 
 - D0：文档规范/AGENTS 规约/密钥 gitignore；pytest+playwright（无 node）。
