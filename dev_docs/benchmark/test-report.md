@@ -333,3 +333,118 @@ uv run python -m record2gherkin.benchmark.orchestrator --exp-id miniwob-r2 --sta
 1. **manifest 新字段为条件披露**：`llm_provider`/`model` 仅在非默认 provider 时写入——若无条件追加，deepseek 现状 manifest 键集变化将违反"默认路径逐字节一致 + 现有测试零修改"红线（`test_f23` 断言精确键集）；deepseek 的口径已由既有 `model_name`/`llm_base_url` 隐含披露。
 2. **"缺 MODEL 回退"的实现位置**：`read_api_key` 只消费 `KEY=`（字段无关解析，缺 `MODEL=`/`BASE_URL=` 行不影响 key 读取）；运行时 model/base_url 恒取 provider 代码常量（glm-5.3-flash / coding 端点），`GLM-Key.txt` 中的 `MODEL=`/`BASE_URL=` 行为人工参考、运行时不读取——改模型需改代码常量，避免 key 文件内容漂移影响实验口径。
 3. **evaluation/sweep.py 未 provider 化**（Out of Scope）：sweep 仍固定 deepseek 常量；r2 实验走 benchmark orchestrator 链路，不经过 sweep。
+
+## 14. r3 实现补记（spec-r3 / review-r3 M1–M3 全部落地；2026-09-23）
+
+> 范围：R3-1…R3-6 全部引擎/harness 改动 + 离线单测 T1–T12。review-r3 三项必改（M1 无条件覆盖、
+> M2 provider 层同源、M3 保守档 65/125=52.0%）已在实现中按修订后 spec 落地。**未跑真 LLM、未跑
+> Hercules、未做任何 git 操作**（pilot/headline/D 臂由总编排执行，命令见 §14.6）。
+
+### 14.1 测试结果（离线，无 key、零外网）
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest tests/record2gherkin -q` | **456 passed**（74.6s；r2 基线 427 + 新增 29 = 456，零丢失零跳过） |
+| `uv run pytest tests/record2gherkin/benchmark/test_r3_improvements.py -q` | **29 passed**（T1–T12 全覆盖；T3 为 subprocess 隔离，T5/T6/T9 为 monkeypatch stub，T12 为 D 臂 dry-run） |
+| `uv run pytest tests/test_simple_hercules_langgraph.py -q` | **12 passed**（改动前后 stash 对照各跑一次，结果一致——引擎回归零变化） |
+| `uv run black --target-version py311 -l 200 --check`（全部触碰文件 + `record2gherkin/` + `tests/record2gherkin/`） | FMT-CLEAN；isort 同过（profile=black） |
+| 判分链 diff 审计 | `build_result_row` 函数体、`fetch_reward`/`/latest`、`miniwob_server.py`、`goal_reader.py`、`tasks.py`、`preflight.py` diff 为 **0 行**（spec §9 验收 2） |
+
+T1–T12 → 测试函数对照：T1 = `test_t1_*`（3）；T2 = `test_t2_*`（4，含 wait_for 层 + provider 层）；T3 = `test_t3_*`（2，subprocess）；T4 = `test_t4_*`（1）；T5 = `test_t5_*`（2）；T6 = `test_t6_*`（2）；T7 = `test_t7_*`（1）；T8 = `test_t8_*`（3，含 >50 截断）；T9 = `test_t9_*`（4）；T10 = `test_t10_*`（5）；T11 = `test_t11_*`（1）；T12 = `test_t12_*`（1）。另含 CLI 全 flag 组合 dry-run 冒烟（§14.6 注）。
+
+### 14.2 r2 flag 零回归证明
+
+1. **r2 十二个开关的行为面未动**：`terminal_cue/single_start/role_routing/nav_model/latency_env/extra_tools/template_notes/smoke_cells/provider/max_cells/dry-run/force` 的构造参数、`LATENCY_ENV_OVERRIDES` 五键值（逐字节）、`hercules_budget`/`R2_BUDGET_CAP=144`、C1b/C1c/C1a 全部原样；`git diff` 对这些路径只有增量 append/新增分支，无既有行改写（除 `_child_extra_env` 的文档串与新增 if 块）。
+2. **r2 既有测试适配 4 处（均由 spec-r3 §7/T10 强制，非行为回归）**：
+   - `test_f23_manifest_fields_and_no_secrets` / `test_t11_default_flags_are_all_off` / `test_t11_manifest_records_flags`：manifest `flags` 精确键集断言扩为 r2 八键 + r3 五新键（off 时 `nav_max_tokens=0`、`planner_timeout=0`、`extra_tools_modules=[]`、`disable_sandbox=false`、`assert_discipline=false`）——spec-r3 §7 要求五个新键恒在 manifest `flags`。
+   - `test_t7_latency_and_extra_tools_merge_over_routing`：`--extra-tools` 现默认同时注入 `EXTRA_TOOLS_MODULES="drag_and_drop_tool"`，env 键数 5+1+4 → 5+2+4（spec-r3 §5.1/T10a）。
+   - 语义全部保留：off 语义、键值、预算、smoke 规则断言一字未改。
+3. **其余 r2 测试零修改全绿**（427 → 456 中 423 条未触碰）。
+
+### 14.3 E 类判分中立默认值清单（spec-r3 §5 前言口径）
+
+| 项 | 载体 | 默认态（flags 全 off / 默认命令）行为 | 对判分影响 |
+|---|---|---|---|
+| E1 子集加载 | env `EXTRA_TOOLS_MODULES`（config relevant_keys + setdefault `""` + getter） | 未注入 → allow 为空 → 全量加载 = r2 | 无（env 不注入时引擎不变） |
+| E2 文件工具日志行 + 扫描 | `file_handler_tool.py` 三函数入口 + `FILE_TOOL_CALL_MARKERS`/`INVALID_REASON_FILE_TOOL` | 无 flag；日志行只在真被调用时出现；命中 → `invalid_reason=file_tool_invoked` | 判分中立（只增 invalid 披露，不改 status/official_passed）；对零调用运行零输出 |
+| E3 scheme 白名单 | `open_url.py`（special 块后、`ensure_protocol` 前；新增 `add_event/EventType/EventData` import） | 无 flag、对任何运行生效；`javascript:/data:/file:` 等拒绝且零导航；`[OPEN_URL_BLOCKED]` → 仅 `flagged=True` | 判分中立（安全增强，review-r3 §二-12 已裁定为"唯一例外"） |
+| E4 metrics clean 口径 | `metrics.py`：`clean_rate` + `Summary.clean`/`invalid_cells`（≤50 条截断，`invalid_cells_total` 记全量） + `as_dict` | 无 flag；`overall`/`_rate` 零改动（invalid 格仍在官方分母） | 无（manifest `metrics` 只增披露字段） |
+| E5 沙箱关停 | env `SANDBOX_DISABLED`（config + getter）；`execute_python_sandbox.py` 入口拒绝；`SANDBOX_CALL_MARKERS` 追加 `[SANDBOX_DISABLED]` | 未注入 → `get_sandbox_disabled()=="false"` → 走原路径（首行日志与 r2 逐字节同） | 无（env 不注入时引擎不变） |
+| E6 极早崩留痕 | orchestrator `GoalReadError` 分支写 `runs/<run_id>/goal_read_error.log`（mkdir + 写失败仅 warning） | 无 flag；仅 no_goal 格新增一个留痕文件 | 无（`failure_message` 与结果行语义不变） |
+
+R3-1/R3-2/R3-6 三个引擎行为 flag 默认 off 的逐字节复现由 T1（env 未设 → 4096）、T2（env 未设 → 双层同为 `LLM_REQUEST_TIMEOUT`、planner 产物 timeout==90）、T11（off/未设 → system_message 与 r2 快照相等）锁定。
+
+### 14.4 实现口径与已知问题（4 条 + 1 条 spec 勘误，均不阻塞核心目标）
+
+1. **spec T8 "overall = 1/3" 系算术勘误**：按其行构造（invalid&passed=True + invalid&failed + 正常通过），在 `_rate` 零改动约束下 overall=**2/3**（`_passed` 对 official_passed=True 一律计 1，r2 官方口径本就含 invalid-but-passed 格；spec §5.4/§10 两次明令禁止改动）。测试锁定 2/3 + clean=1/1 + invalid_cells 恰两格，并注明理由。
+2. **`invalid_cells` 截断计数载体**：spec 只定 `Summary` 增 `clean`/`invalid_cells` 两字段、未给截断计数落点；按"最简单确定性行为"增整数披露字段 `invalid_cells_total`（`as_dict` 同步），使 `len(invalid_cells) ≤ 50 < total` 可审计（T8 第三条锁定）。
+3. **scheme 白名单的 `localhost:PORT` 边缘**（review-r3 S2，spec 未采纳放行）：`urlsplit("localhost:5000/x").scheme=="localhost"` 会被拒。benchmark 任务 URL 恒为 `http://127.0.0.1:…`（带 scheme）不受影响；r3 报告如出现该形态被拒格，按 E3 的 `[OPEN_URL_BLOCKED]` 披露口径呈现即可。
+4. **file:// 被拦截尝试的双标记**：`open_url("file://…")` 的拒绝日志行同时含 `file://` 子串 → V5 扫描判 `file_url_navigation`（invalid）。与 r2"file:// 即安全事件"契约方向一致（偏保守、只多不少），无需分支特判；T7 的 open_url-blocked 用例用 javascript:/data: 验证"仅披露"通道。
+5. **black 对 `_llm_ainvoke` 的折行**：spec §2.2 的多行三元式被项目 black（-l 200）折为单行，语义逐字节等价（T2 四条锁定）。
+
+### 14.5 r3 引擎侧改动文件清单（全部为 plan-r3 §1 采纳项落点）
+
+| 文件 | 改动 |
+|---|---|
+| `testzeus_hercules/utils/llm_helper.py` | +`get_nav_max_completion_tokens()`、+`get_llm_planner_request_timeout_seconds()`、`create_chat_model` 兜底段后 env>0 无条件覆盖 `max_tokens`（M1 修法） |
+| `testzeus_hercules/core/simple_hercules.py` | `_llm_ainvoke`：planner 走 `get_llm_planner_request_timeout_seconds`，其余 agent 原值（§2.2） |
+| `testzeus_hercules/core/agents/high_level_planner_agent.py` | provider timeout 兜底同源（§2.3，M2 修法）；`PLANNER_ASSERT_DISCIPLINE=true` 时前置 `_ASSERT_DISCIPLINE_INSTRUCTION`（逐字）（§6）；+`get_global_conf` import |
+| `testzeus_hercules/core/extra_tools/drag_and_drop_tool.py` | source 解析替换为 candidates 透传（删 `[md='…']` 包裹缺陷段）；find_element 按序尝试、全败列全候选；description/参数 docstring 更新；target 侧与鼠标序列零改动（§3.1） |
+| `testzeus_hercules/core/extra_tools/__init__.py` | LOAD_EXTRA_TOOLS 门控内增 `EXTRA_TOOLS_MODULES` 白名单过滤，空=全量（§5.1） |
+| `testzeus_hercules/core/extra_tools/file_handler_tool.py` | persist/recall/augment 三入口各 +1 行 `[EXTRA_TOOL_CALL] <name> path=…`（§5.2） |
+| `testzeus_hercules/core/tools/open_url.py` | scheme 白名单（http/https 放行；拒绝返回固定文案 + `[OPEN_URL_BLOCKED]` 日志 + 事件），插入点= special 块后（§5.3） |
+| `testzeus_hercules/core/tools/execute_python_sandbox.py` | 函数体最前 `SANDBOX_DISABLED=true` 拒绝（tenant 读取/任何日志标记之前）（§5.5） |
+| `testzeus_hercules/config.py` | relevant_keys + `EXTRA_TOOLS_MODULES`/`SANDBOX_DISABLED`/`PLANNER_ASSERT_DISCIPLINE`；`_finalize_defaults` 三个 setdefault；+`get_extra_tools_modules()`/`get_sandbox_disabled()` |
+| `record2gherkin/benchmark/metrics.py` | `clean_rate`/`invalid_cell_list`（`INVALID_CELLS_LIMIT=50`）、`Summary.clean`/`invalid_cells`/`invalid_cells_total`、`summarize`/`as_dict` 接线；`_rate` 零改动（§5.4） |
+| `record2gherkin/benchmark/orchestrator.py` | 五新 CLI + `__init__` 参数/校验（空 modules 硬失败）/flags 五新键；`_child_extra_env` 五新 env（`all` → 不注入 `EXTRA_TOOLS_MODULES`）；扫描器 `FILE_TOOL_CALL_MARKERS`/`INVALID_REASON_FILE_TOOL`/`OPEN_URL_BLOCKED_MARKER`（仅 flagged）/`SANDBOX_CALL_MARKERS`+`[SANDBOX_DISABLED]`；E6 `goal_read_error.log`；docstring 增 r3 段 |
+
+### 14.6 总编排执行 r3 的完整命令
+
+r2 七开关原样保留；断点续跑=重跑同命令（已有行自动跳过）；`--max-cells` 按 5h 窗口配速。
+
+```bash
+# 0) 预演（不进程、不写文件、跳过 C1c 预检）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r3 --stage full --dry-run --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --nav-max-tokens 768 --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline
+
+# 1) M1 pilot + drag 冒烟（14 执行 = 10 + 重试 2 + smoke 2；kill-switch 判据：2 格 stdout.log 中
+#    "Found source element using selector:"（进入鼠标序列的代理信号，review-r3 S1）出现 ≥1 次 → 保留
+#    子集进 headline；仍为 0 → headline 去掉 --extra-tools 并在报告声明放弃拖拽家族）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r3 --stage pilot --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --nav-max-tokens 768 --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --smoke-cells drag-items,drag-box \
+  --max-cells <按5h窗口配速>
+
+# 2) M2 headline full（125 + 重试 5 = 130 ≤ cap 144；flags 全集入 manifest）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r3 --stage full --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --nav-max-tokens 768 --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --max-cells <按5h窗口配速>
+```
+
+D-ablation 臂（R3-4，零代码，**须用户逐项批准后执行**；独立 exp-id/exp-root 另批 135 执行；所有数字必须携带 `episode_max_time_ms=480000 / timeout_s=900` 标注双列呈现，禁止与 headline 合并分母）：
+
+```bash
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r3-d480 --stage full --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --nav-max-tokens 768 --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --episode-ms 480000 --timeout-s 900 \
+  --exp-root dev_runs/benchmark-ablation \
+  --max-cells <按5h窗口配速>
+```
+
+（T12 已离线验证 D 臂 CLI 组合：dry-run 计划 125 格、budget `{"breakdown": {"full": 125}, "retry": 5, "total": 130, "cap": 144}`、URL 含 `r2g_ms=480000`、零执行零落盘、不触发预检；本实现阶段另以全部 headline flags + `--episode-ms 480000 --timeout-s 900` 做过一次 CLI dry-run 冒烟，exit 0。）
+
+### 14.7 脱敏红线复核
+
+本补记全部改动不读写任何 key 文件；`role_routing_env`/`write_agents_llm_config` 的"key 只走 env、配置文件永不落 key"红线代码未动（T10 断言 env 注入、既有 T7 断言文件无 key 继续生效）；测试使用的均为内存/临时假 key。

@@ -97,14 +97,19 @@ def test_t7_child_env_exact_key_set_with_flag_on_and_off(tmp_path: Path, tasks: 
 
 
 def test_t7_latency_and_extra_tools_merge_over_routing(tmp_path: Path, tasks: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
-    """T7 补充：多 flag 合并 —— latency 五键 + LOAD_EXTRA_TOOLS + 路由四键同时到位。"""
+    """T7 补充：多 flag 合并 —— latency 五键 + LOAD_EXTRA_TOOLS + 路由四键同时到位。
+
+    r3 适配（spec-r3 §5.1/T10）：``--extra-tools`` 现默认同时注入 ``EXTRA_TOOLS_MODULES`` 子集
+    （默认 ``drag_and_drop_tool``），键数 5+1+4 → 5+2+4。
+    """
     monkeypatch.setattr(orchestrator.runner_module, "read_api_key", lambda path=None: FAKE_KEY)
     view = _view(tasks, tmp_path, role_routing=True, latency_env=True, extra_tools=True)
     view.exp_dir.mkdir(parents=True, exist_ok=True)
     view._routing_config_path = view._prepare_role_routing()
     env = view._child_extra_env()
     assert env["LOAD_EXTRA_TOOLS"] == "true"
+    assert env["EXTRA_TOOLS_MODULES"] == "drag_and_drop_tool"
     for key, value in orchestrator.LATENCY_ENV_OVERRIDES.items():
         assert env[key] == value
     assert env["AGENTS_LLM_CONFIG_FILE"] == str(view.exp_dir / AGENTS_LLM_CONFIG_FILENAME)
-    assert len(env) == 5 + 1 + 4
+    assert len(env) == 5 + 2 + 4

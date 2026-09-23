@@ -201,7 +201,8 @@ def test_f23_manifest_fields_and_no_secrets(tmp_path: Path, tasks: list[dict[str
     assert len(manifest["cells"]) == 10
     assert manifest["budget"]["hercules_used"] == 0 and manifest["budget"]["cap"] == 144
     assert manifest["metrics"]["overall"]["total"] == 10
-    # 默认运行：flags 全 false（nav_model/smoke_cells 为记录字段）
+    # 默认运行：flags 全 false（nav_model/smoke_cells 为记录字段）；r3 起新增五键、默认 off/空语义
+    # （spec-r3 §7；r2 八键断言按 spec 增量适配）
     assert manifest["flags"] == {
         "terminal_cue": False,
         "single_start": False,
@@ -211,6 +212,11 @@ def test_f23_manifest_fields_and_no_secrets(tmp_path: Path, tasks: list[dict[str
         "template_notes": False,
         "latency_env": False,
         "smoke_cells": [],
+        "nav_max_tokens": 0,
+        "planner_timeout": 0,
+        "extra_tools_modules": [],
+        "disable_sandbox": False,
+        "assert_discipline": False,
     }
     assert "api_key" not in json.dumps(manifest).lower()
     assert "redacted" not in json.dumps(manifest).lower()
@@ -671,7 +677,7 @@ def test_t10_orchestrator_passes_attempt_dirs_and_row_attempt(tmp_path: Path, ta
 
 
 def test_t11_default_flags_are_all_off(tasks: list[dict[str, Any]]) -> None:
-    """T11：默认运行 flags 全 false；nav_model 记录默认值；smoke 清单为空。"""
+    """T11：默认运行 flags 全 false；nav_model 记录默认值；smoke 清单为空；r3 五键 off/空（spec-r3 §7）。"""
     view = Orchestrator("e", stage="pilot", tasks=tasks, dry_run=True)
     assert view.flags == {
         "terminal_cue": False,
@@ -682,6 +688,11 @@ def test_t11_default_flags_are_all_off(tasks: list[dict[str, Any]]) -> None:
         "template_notes": False,
         "latency_env": False,
         "smoke_cells": [],
+        "nav_max_tokens": 0,
+        "planner_timeout": 0,
+        "extra_tools_modules": [],
+        "disable_sandbox": False,
+        "assert_discipline": False,
     }
 
 
@@ -764,6 +775,7 @@ def test_t11_manifest_records_flags(tmp_path: Path, tasks: list[dict[str, Any]])
     view.exp_dir.mkdir(parents=True, exist_ok=True)
     view._write_manifest()
     manifest = json.loads(view.manifest_path.read_text(encoding="utf-8"))
+    # r3 增量（spec-r3 §7）：extra_tools=True 时子集默认 ["drag_and_drop_tool"]，其余新键保持 off
     assert manifest["flags"] == {
         "terminal_cue": True,
         "single_start": True,
@@ -773,5 +785,10 @@ def test_t11_manifest_records_flags(tmp_path: Path, tasks: list[dict[str, Any]])
         "template_notes": True,
         "latency_env": True,
         "smoke_cells": ["drag-items", "drag-box"],
+        "nav_max_tokens": 0,
+        "planner_timeout": 0,
+        "extra_tools_modules": ["drag_and_drop_tool"],
+        "disable_sandbox": False,
+        "assert_discipline": False,
     }
     assert "api_key" not in json.dumps(manifest).lower()

@@ -107,7 +107,7 @@ class CostSummary:
 
 @dataclass
 class Summary:
-    """Everything the test report needs, computed once from one exp's rows (spec §8.6)."""
+    """Everything the test report needs, computed once from one exp's rows (spec §8)."""
 
     exp_id: str | None
     rows: int
@@ -123,6 +123,11 @@ class Summary:
     disagreements: list[dict[str, Any]] = field(default_factory=list)
     status_counts: dict[str, int] = field(default_factory=dict)
     failures: list[dict[str, Any]] = field(default_factory=list)
+    # spec-r3 §5.4 (E4): the clean-calibre rate (invalid cells out of numerator AND denominator)
+    # plus the per-cell invalid disclosure.  ``overall`` keeps the official口径 untouched.
+    clean: MetricValue | None = None
+    invalid_cells: list[dict[str, Any]] = field(default_factory=list)
+    invalid_cells_total: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -140,6 +145,9 @@ class Summary:
             "disagreements": self.disagreements,
             "status_counts": self.status_counts,
             "failures": self.failures,
+            "clean": self.clean.as_dict() if self.clean else None,
+            "invalid_cells": self.invalid_cells,
+            "invalid_cells_total": self.invalid_cells_total,
         }
 
 
@@ -215,6 +223,48 @@ def _rate(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Seque
             missing.append(task_id)
         passed += _passed(row)
     return MetricValue(value=passed / total, passed=passed, total=total, missing=tuple(missing))
+
+
+#: spec-r3 §5.4 (E4): ``invalid_cells`` is capped at this many entries; the full count stays in
+#: ``invalid_cells_total`` so the truncation is auditable.
+INVALID_CELLS_LIMIT = 50
+
+
+def clean_rate(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Sequence[Mapping[str, Any]]) -> MetricValue:
+    """Clean-calibre rate (spec-r3 §5.4/E4): latest rows carrying an ``invalid_reason`` leave the
+    numerator **and** the denominator; every other task counts exactly like ``_rate`` (a cell
+    without a row still counts 0 and is listed as missing).  The official ``overall`` is untouched.
+    """
+    if not tasks:
+        return MetricValue(value=None, passed=0, total=0, missing=())
+    indexed = index_by_task(cells)
+    passed = 0
+    total = 0
+    missing: list[str] = []
+    for task in tasks:
+        task_id = str(task.get("task_id"))
+        row = indexed.get(task_id)
+        if row is not None and row.get("invalid_reason") is not None:
+            continue  # invalid cell: out of both numerator and denominator
+        total += 1
+        if row is None:
+            missing.append(task_id)
+        passed += _passed(row)
+    return MetricValue(value=passed / total if total else None, passed=passed, total=total, missing=tuple(missing))
+
+
+def invalid_cell_list(cells: Mapping[tuple[str, int | str], Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """``invalid_cells`` disclosure (spec-r3 §5.4/E4): one ``{"task_id", "seed", "invalid_reason"}``
+    entry per latest row with an ``invalid_reason``, sorted by task_id, capped at
+    :data:`INVALID_CELLS_LIMIT`; returns ``(entries, total_invalid)``."""
+    entries: list[dict[str, Any]] = []
+    for (_task_id, seed), row in cells.items():
+        reason = row.get("invalid_reason")
+        if reason is None:
+            continue
+        entries.append({"task_id": str(row.get("task_id")), "seed": seed, "invalid_reason": reason})
+    entries.sort(key=lambda entry: (entry["task_id"], str(entry["seed"])))
+    return entries[:INVALID_CELLS_LIMIT], len(entries)
 
 
 def family_rates(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -333,6 +383,7 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, tasks: Sequence[Mapping[str,
     cells, duplicates = latest_rows(rows)
     junit_value, junit_unavailable = junit_rate(cells, task_table)
     found = disagreements(rows)
+    invalid_entries, invalid_total = invalid_cell_list(cells)
     return Summary(
         exp_id=exp_id,
         rows=len(rows),
@@ -348,6 +399,9 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, tasks: Sequence[Mapping[str,
         disagreements=found,
         status_counts=status_counts(rows),
         failures=failures(rows),
+        clean=clean_rate(cells, task_table),
+        invalid_cells=invalid_entries,
+        invalid_cells_total=invalid_total,
     )
 
 

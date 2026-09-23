@@ -38,6 +38,23 @@ r2 operations (all flag-gated, default off; C1a/C1b/C1c/C1d are always on):
   env only), rides the coding-plan endpoint with ``glm-5.3-flash`` and defaults the routed nav
   model to ``glm-5.3-flash`` / the planner to ``glm-5.3``; a non-default provider adds
   ``llm_provider`` + ``model`` to the manifest for 口径披露.
+
+r3 operations (spec-r3 §7, all flag-gated, default off = r2 behaviour):
+
+* ``--nav-max-tokens`` (R3-1) — ``NAV_MAX_COMPLETION_TOKENS`` completion cap for the nav/executor
+  chat models; the headline tightens the adapt-injected 4096 to 768.
+* ``--planner-timeout`` (R3-2) — ``LLM_PLANNER_REQUEST_TIMEOUT``, same-sourced into the planner's
+  graph-level ``wait_for`` *and* its provider ``timeout``; other agents keep ``LLM_REQUEST_TIMEOUT``.
+* ``--extra-tools-modules`` (E1) — extra_tools subset allowlist (default ``drag_and_drop_tool`` only;
+  ``all`` = the full r2 load, disclosed as ``["__all__"]`` in ``flags``).
+* ``--disable-sandbox`` (E5) — ``SANDBOX_DISABLED=true``; a blocked sandbox attempt is still scanned
+  as ``sandbox_tool_invoked``.
+* ``--assert-discipline`` (R3-6/F) — ``PLANNER_ASSERT_DISCIPLINE=true`` planner prompt preamble.
+
+Flag-less harness disclosures (spec-r3 §5, judgement-neutral): file-tool call markers invalidate the
+cell (E2), the ``open_url`` scheme whitelist logs ``[OPEN_URL_BLOCKED]`` flagged-only (E3), the
+metrics ``clean`` calibre + ``invalid_cells`` list (E4), and the ``goal_read_error.log`` trace for
+extreme-early-crash cells (E6).
 """
 
 from __future__ import annotations
@@ -133,6 +150,12 @@ DEFAULT_NAV_MODEL = "deepseek-flash"
 #: provider's own model) while the planner keeps the flagship model.
 GLM_PLANNER_MODEL = "glm-5.3"
 AGENTS_LLM_CONFIG_FILENAME = "agents_llm_config.json"
+
+# -- r3 switch set (spec-r3 §7) -----------------------------------------------------------------
+#: spec-r3 §5.1 (E1): default extra_tools subset — drag only; ``all`` restores the full r2 load.
+DEFAULT_EXTRA_TOOLS_MODULES = "drag_and_drop_tool"
+#: manifest marker for the "no allowlist" (full r2 extra_tools load) choice.
+EXTRA_TOOLS_MODULES_ALL = "__all__"
 
 
 class BenchmarkError(RuntimeError):
@@ -348,7 +371,8 @@ FILE_URL_MARKER = "file://"
 #: V6：Python 沙箱**被调用**的日志标记（``execute_python_sandbox.py:62,70``）。绝不能匹配工具注册
 #: 日志（``[TOOL_DEBUG] ... 'execute_python_sandbox'`` / ``Registered tool: execute_python_sandbox``
 #: 在每个 run 里都出现），否则每个 cell 都会被误判。
-SANDBOX_CALL_MARKERS = ("Executing Python sandbox:", "Using sandbox tenant")
+#: spec-r3 §5.5 (E5)：``[SANDBOX_DISABLED]`` = 被关停机制拦截的尝试 —— 契约不变：尝试即无效。
+SANDBOX_CALL_MARKERS = ("Executing Python sandbox:", "Using sandbox tenant", "[SANDBOX_DISABLED]")
 #: V3：合法 ``reason`` 域 = ``{"", "timed out"}``（审查报告 §2.V3）+ 复核 vendored 树后补充的
 #: ``unicode-test`` 两个终局原因（只有 ``core/core.js:102`` 与 ``miniwob/unicode-test.html:53,55``
 #: 传第三个参数；其余 129 个任务页都不传）。
@@ -358,6 +382,17 @@ LEGAL_REWARD_REASON_PREFIXES = ("You clicked on ",)
 #: ``invalid_reason`` 取值（非 null ⇒ 该 cell 判为无效，安全事件）。
 INVALID_REASON_FILE_URL = "file_url_navigation"
 INVALID_REASON_SANDBOX = "sandbox_tool_invoked"
+#: spec-r3 §5.2 (E2)：文件工具**调用**日志行标记（file_handler_tool.py 三函数入口）——命中即无效，
+#: 与 r2 的 file_url/sandbox 同路；九格静默成功的检测缺口就此封死。
+FILE_TOOL_CALL_MARKERS = (
+    "[EXTRA_TOOL_CALL] persist_findings",
+    "[EXTRA_TOOL_CALL] recall_findings",
+    "[EXTRA_TOOL_CALL] augment_findings",
+)
+INVALID_REASON_FILE_TOOL = "file_tool_invoked"
+#: spec-r3 §5.3 (E3)：open_url scheme 白名单的拒绝日志标记 —— **仅披露**（flagged=True、不改
+#: invalid_reason），与 r2 对 javascript: 尝试"低危披露不判无效"的处理对齐。
+OPEN_URL_BLOCKED_MARKER = "[OPEN_URL_BLOCKED]"
 
 
 def _attempt_circuit_break(result: runner_module.RunResult, *, stdout_log_path: str | Path) -> bool:
@@ -410,7 +445,7 @@ def _page_signature(subdomain: str, seed: int) -> tuple[str, str]:
 
 
 def scan_cell_log(log_path: str | Path, *, subdomain: str, seed: int) -> CellScan:
-    """H2 — read the already-written ``stdout.log`` and do three things (安全审查 R1 §4.2).
+    """H2 — read the already-written ``stdout.log`` and do four things (安全审查 R1 §4.2).
 
     ① count the navigations to this cell's seeded task URL (``task_url_navigations``); more than one
     flags the row (V4: every renavigation re-runs patch A, resetting the 240s clock and discarding the
@@ -418,7 +453,14 @@ def scan_cell_log(log_path: str | Path, *, subdomain: str, seed: int) -> CellSca
     ② any ``file://`` in the log marks the cell invalid + security event (V5: local files — the API key
     file included — can reach the LLM context through ``get_page_text``);
     ③ any *call* marker of the Python sandbox tool does the same (V6: the restricted tenant is not a
-    security boundary — ``open()``, ``os.environ`` and ``page.evaluate`` are all reachable).
+    security boundary — ``open()``, ``os.environ`` and ``page.evaluate`` are all reachable; the r3
+    ``[SANDBOX_DISABLED]`` refusal marker counts too — a blocked attempt is still an attempt);
+    ④ file-tool call markers (``[EXTRA_TOOL_CALL] persist/recall/augment_findings``, spec-r3 §5.2)
+    mark the cell invalid (``file_tool_invoked``) — the r2 silent-success detection gap.
+
+    Additionally, the ``[OPEN_URL_BLOCKED]`` scheme-whitelist refusal (spec-r3 §5.3) sets
+    ``flagged`` **only** (disclosure, never ``invalid_reason``), matching the r2 treatment of the
+    low-risk ``javascript:`` attempts.
 
     A missing/unreadable log yields a neutral scan (0 navigations, no marker): no evidence, no claim.
     """
@@ -437,9 +479,11 @@ def scan_cell_log(log_path: str | Path, *, subdomain: str, seed: int) -> CellSca
         reasons.append(INVALID_REASON_FILE_URL)
     if any(marker in text for marker in SANDBOX_CALL_MARKERS):
         reasons.append(INVALID_REASON_SANDBOX)
+    if any(marker in text for marker in FILE_TOOL_CALL_MARKERS):
+        reasons.append(INVALID_REASON_FILE_TOOL)
     return CellScan(
         task_url_navigations=navigations,
-        flagged=navigations > TASK_URL_NAVIGATION_FLAG_THRESHOLD or bool(reasons),
+        flagged=navigations > TASK_URL_NAVIGATION_FLAG_THRESHOLD or bool(reasons) or OPEN_URL_BLOCKED_MARKER in text,
         invalid_reason="; ".join(reasons) or None,
     )
 
@@ -746,6 +790,11 @@ class Orchestrator:
         role_routing: bool = False,
         nav_model: str | None = None,
         extra_tools: bool = False,
+        extra_tools_modules: str = DEFAULT_EXTRA_TOOLS_MODULES,
+        nav_max_tokens: int = 0,
+        planner_timeout: int = 0,
+        disable_sandbox: bool = False,
+        assert_discipline: bool = False,
         template_notes: bool = False,
         latency_env: bool = False,
         smoke_cells: Sequence[str] = (),
@@ -791,11 +840,28 @@ class Orchestrator:
         self.role_routing = bool(role_routing)
         self.nav_model = str(nav_model).strip() if nav_model and str(nav_model).strip() else nav_model_default
         self.extra_tools = bool(extra_tools)
+        # spec-r3 §5.1 (E1): the subset csv is only consumed with --extra-tools; an empty value with
+        # --extra-tools would silently re-open the full (r2) tool surface, so it is a hard error.
+        self.extra_tools_modules_csv = str(extra_tools_modules).strip()
+        if self.extra_tools and not self.extra_tools_modules_csv:
+            raise BenchmarkError("--extra-tools-modules must not be empty (pass 'all' for the full r2 load)")
+        self.extra_tools_modules: list[str] = []
+        if self.extra_tools:
+            if self.extra_tools_modules_csv.lower() == "all":
+                self.extra_tools_modules = [EXTRA_TOOLS_MODULES_ALL]
+            else:
+                self.extra_tools_modules = [name.strip() for name in self.extra_tools_modules_csv.split(",") if name.strip()]
+        # spec-r3 §1.2/§2.4/§5.5/§6: 0/off = r2 behaviour; the headline turns each on explicitly.
+        self.nav_max_tokens = int(nav_max_tokens)
+        self.planner_timeout = int(planner_timeout)
+        self.disable_sandbox = bool(disable_sandbox)
+        self.assert_discipline = bool(assert_discipline)
         self.template_notes = bool(template_notes)
         self.latency_env = bool(latency_env)
         self.max_cells = int(max_cells) if max_cells else None
         self.smoke_subdomains = smoke
         #: spec-r2 §4.1: every switch lands in the manifest ``flags`` object (headline = all-on).
+        #: spec-r3 §7 adds the five r3 keys (off/empty semantics on the default run).
         self.flags: dict[str, Any] = {
             "terminal_cue": self.terminal_cue,
             "single_start": self.single_start,
@@ -805,6 +871,11 @@ class Orchestrator:
             "template_notes": self.template_notes,
             "latency_env": self.latency_env,
             "smoke_cells": list(self.smoke_subdomains),
+            "nav_max_tokens": self.nav_max_tokens,
+            "planner_timeout": self.planner_timeout,
+            "extra_tools_modules": list(self.extra_tools_modules),
+            "disable_sandbox": self.disable_sandbox,
+            "assert_discipline": self.assert_discipline,
         }
         self.tasks = [dict(task) for task in tasks] if tasks is not None else tasks_module.load_tasks()
         self.stage_tasks = tasks_module.select_stage(stage, self.tasks)
@@ -896,12 +967,27 @@ class Orchestrator:
         return write_agents_llm_config(self.exp_dir / AGENTS_LLM_CONFIG_FILENAME, config)
 
     def _child_extra_env(self) -> dict[str, str]:
-        """Merged ``extra_env`` of every enabled r2 flag (spec-r2 §5.3/§6.2/§7.1)."""
+        """Merged ``extra_env`` of every enabled r2/r3 flag (spec-r2 §5.3/§6.2/§7.1, spec-r3 §7).
+
+        r3 injection precision (locked by T10): the five new keys appear only with their flag on;
+        ``extra_tools_modules=["__all__"]`` (the ``all`` csv) injects ``LOAD_EXTRA_TOOLS`` but **no**
+        ``EXTRA_TOOLS_MODULES`` — the full r2 load.
+        """
         extra: dict[str, str] = {}
         if self.latency_env:
             extra.update(LATENCY_ENV_OVERRIDES)
         if self.extra_tools:
             extra["LOAD_EXTRA_TOOLS"] = "true"
+            if self.extra_tools_modules != [EXTRA_TOOLS_MODULES_ALL]:
+                extra["EXTRA_TOOLS_MODULES"] = self.extra_tools_modules_csv
+        if self.nav_max_tokens > 0:
+            extra["NAV_MAX_COMPLETION_TOKENS"] = str(self.nav_max_tokens)
+        if self.planner_timeout > 0:
+            extra["LLM_PLANNER_REQUEST_TIMEOUT"] = str(self.planner_timeout)
+        if self.disable_sandbox:
+            extra["SANDBOX_DISABLED"] = "true"
+        if self.assert_discipline:
+            extra["PLANNER_ASSERT_DISCIPLINE"] = "true"
         if self.role_routing and self._routing_config_path is not None:
             extra.update(role_routing_env(self._routing_config_path, runner_module.read_api_key(self.provider.key_path)))
         return extra
@@ -980,6 +1066,15 @@ class Orchestrator:
         try:
             goal = goal_reader.read_goal(cell.subdomain, cell.seed, port=self.port, episode_ms=self.episode_ms)
         except goal_reader.GoalReadError as exc:
+            # spec-r3 §5.6 (E6): persist the extreme-early-crash evidence (e.g. the r2 0.6s
+            # email-inbox-forward-nl cell that left zero logs).  Failure to write is a warning only —
+            # the result row's failure_message semantics stay untouched.
+            try:
+                error_log_dir = self.runs_dir / cell.run_id
+                error_log_dir.mkdir(parents=True, exist_ok=True)
+                (error_log_dir / "goal_read_error.log").write_text(str(exc) + "\n", encoding="utf-8")
+            except OSError as write_error:
+                logger.warning("orchestrator: could not write goal_read_error.log for %s: %s", cell.label, write_error)
             row = build_result_row(
                 task=self._task_for(cell.task_id),
                 seed=cell.seed,
@@ -1088,8 +1183,8 @@ class Orchestrator:
 
         H2 reads only this attempt's log (C1d); the H3 window filter already isolates this attempt's
         reward records.  A flagged cell is disclosed on the row and logged; only the V5/V6 security
-        events make it invalid (``invalid_reason``) — the official reward and ``status`` are never
-        rewritten.
+        events and the r3 file-tool call markers make it invalid (``invalid_reason``) — the official
+        reward and ``status`` are never rewritten.
         """
         log_scan = scan_cell_log(self._stdout_log_path(cell, attempt=attempt), subdomain=cell.subdomain, seed=cell.seed)
         reward_scan = scan_cell_rewards(
@@ -1278,6 +1373,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--latency-env", action="store_true", help="C4f: inject the latency pack env (timeout/retries/refresh mode/round cap/step budget)")
     parser.add_argument("--smoke-cells", default="", help="comma-separated subdomains appended to the pilot plan (pilot only, never retried)")
     parser.add_argument("--max-cells", type=int, default=None, help="stop after N new cells this invocation (pacing for 5h-window quotas; resume by rerunning the same command)")
+    # -- r3 switch set (spec-r3 §7); all default off (= r2 behaviour), headline turns them on --------
+    parser.add_argument("--nav-max-tokens", type=int, default=0, help="R3-1: NAV_MAX_COMPLETION_TOKENS cap for nav/executor chat models (0 = r2 behaviour, adapt default 4096)")
+    parser.add_argument("--planner-timeout", type=int, default=0, help="R3-2: LLM_PLANNER_REQUEST_TIMEOUT seconds for the planner wait_for AND provider timeout (0 = follow LLM_REQUEST_TIMEOUT)")
+    parser.add_argument(
+        "--extra-tools-modules",
+        default=DEFAULT_EXTRA_TOOLS_MODULES,
+        help="E1: csv extra_tools subset loaded with --extra-tools (default drag_and_drop_tool only; 'all' = full r2 load, empty is an error)",
+    )
+    parser.add_argument("--disable-sandbox", action="store_true", help="E5: inject SANDBOX_DISABLED=true (a blocked attempt still invalidates the cell)")
+    parser.add_argument("--assert-discipline", action="store_true", help="R3-6/F: PLANNER_ASSERT_DISCIPLINE=true planner prompt preamble")
     args = parser.parse_args(argv)
 
     try:
@@ -1297,6 +1402,11 @@ def main(argv: list[str] | None = None) -> int:
             role_routing=args.role_routing,
             nav_model=args.nav_model,
             extra_tools=args.extra_tools,
+            extra_tools_modules=args.extra_tools_modules,
+            nav_max_tokens=args.nav_max_tokens,
+            planner_timeout=args.planner_timeout,
+            disable_sandbox=args.disable_sandbox,
+            assert_discipline=args.assert_discipline,
             template_notes=args.template_notes,
             latency_env=args.latency_env,
             smoke_cells=[cell for cell in args.smoke_cells.split(",") if cell.strip()],
