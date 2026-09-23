@@ -21,22 +21,22 @@
 
 - **证据**：分析 §2.2——10.3% turn（>500 token）吃 38% executor 墙钟；>800 token turn（n=201）间隔中位 46.2s / p90 80s；GLM-flash 少数 turn 生成 2000–3400 token。
 - **为什么是 max_tokens 而不是 prompt**：r2 的 C4d 已落地"Keep responses short"输出克制句，肥尾照旧（分析 §2.2 全量 n=3197）——prompt 纪律对 GLM-flash 已被实证无效，不再重复加文本。max_tokens 是引擎侧硬上限。
-- **为什么 r2 没生效**：config.py:762 的 `LLM_MODEL_MAX_TOKENS=4096` 默认值在 benchmark 路径**从未被消费**——`get_adapted_llm_params()` 仅 mcp_server.py:102 使用；benchmark 走 `AGENTS_LLM_CONFIG_FILE`（File>Env，agents_llm_config_manager.py:128-156 原样透传文件参数），r2 生成的配置文件无 max_tokens → planner/nav 的补全长度的确**无上界**。
-- **改法**：新 env `NAV_MAX_COMPLETION_TOKENS`（默认 0=off），`create_chat_model`（llm_helper.py:89-102）在 kwargs 无 max_tokens 时应用——覆盖全部 nav agents（base_nav_agent.py:67），**不含 planner**（planner 走裸 ChatOpenAI，high_level_planner_agent.py:37-57；对 planner 截断有 JSON 断裂风险，planner 交给 R3-2）。
+- **r2 真实基线（review-r3 M1 修正，原"r2 无上界"立论不成立）**：benchmark 必经路径上 `adapt_llm_params_for_model` 被调用两次——`SimpleHercules.create` 对 planner/nav/helper 三个 config 原地 adapt（simple_hercules.py:152-160；benchmark 走 `SimpleHercules.create`，runner.py:71），`create_chat_model` 内部再 adapt 一次（llm_helper.py:83）。GLM 模型名落入 model_utils.py:69-70 的 "other models" 分支被注入 `max_tokens=4096`——**r2 的 nav/planner 补全存在 4096 硬上限**（生成的 config 文件本身不含 max_tokens，4096 是运行时兜底；config.py:762 的 `LLM_MODEL_MAX_TOKENS=4096` 仅经 `get_adapted_llm_params` 被 mcp_server 消费，与 benchmark 无关、数值上恰与该兜底同值）。实测肥尾 2000–3400 token 全部落在 4096 之内。
+- **改法**：新 env `NAV_MAX_COMPLETION_TOKENS`（默认 0=off），`create_chat_model`（llm_helper.py:89-102）兜底段之后应用——覆盖全部 nav agents（base_nav_agent.py:66 及 multimodal 变体），**不含 planner**（planner 走裸 ChatOpenAI，high_level_planner_agent.py:37-57；对 planner 截断有 JSON 断裂风险，planner 交给 R3-2）。**注入必须是 env>0 时无条件覆盖**（而非 `is None` 兜底）：benchmark 路径 kwargs 恒带 adapt 注入的 4096，`is None` 条件永不成立、768 会静默失效（review-r3 M1）。语义口径 = **把 4096 收紧到 768**；T-B 预期（9/3）不变，其依据是 >768 的实测尾部，与 4096 上限并存不矛盾。
 - **取值 768**：合法动作 turn 0–150 token 占 2274/3197；768 在 ~38 token/s 下把单 turn 延迟天花板压到 ~20s，只切除 >768 的病理尾部（n≤201）。截断的失败模式 = 工具调用参数 JSON 断裂 → 该次调用报错 → agent 下轮缩短重试（一次浪费 2–5s），可接受且须在 test-report 披露。
 - **开关**：orchestrator `--nav-max-tokens <int>`（默认 0=off）→ env 注入。预期救回：T-B 上界 9 / 保守 3（分析 §6 L2 与 B 合并计）。
 
 ### R3-2（B）planner 90s 超时链 = planner 专属超时上限（150s）
 
 - **证据**：25/41 超时格发生 ≥1 次 planner 90s 超时；2 格秒死（N：click-shades、drag-shapes-2，90.0s、0 executor 轮）；2 格 planner 超时诚实终止（O-B）。
-- **机制诊断（读 simple_hercules/llm_helper 现状后的回答："是 90s 太紧还是无重试？"）——两者都有，但改法只取"放宽"**：
-  1. `simple_hercules.py:280-285` `_llm_ainvoke` 用 `asyncio.wait_for(LLM_REQUEST_TIMEOUT)` 硬切**所有** agent 调用；r2 注入的 `LLM_MAX_RETRIES=2` 是 ChatOpenAI provider 级重试，只覆盖快速失败（429/连接错），慢生成在 wait_for 处**零重试即死**（内外 timeout 同为 90s，provider 重试永远来不及发生）。
+- **机制诊断（读 simple_hercules/llm_helper/high_level_planner_agent 现状后的回答："是 90s 太紧还是无重试？"）——90s 对 planner 是**双层**硬墙，改法是双层同源放宽**：
+  1. **双层 90s**：外层 `_llm_ainvoke`（simple_hercules.py:280-285）`asyncio.wait_for(LLM_REQUEST_TIMEOUT)` 硬切所有 agent 调用；内层 planner 的 ChatOpenAI 自身 `timeout` kwarg 兜底同为 90s（high_level_planner_agent.py:53-54，headline 的 `LLM_REQUEST_TIMEOUT=90` 同时喂两层）。provider 层在 90s 掐断单次 HTTP 请求后触发 `LLM_MAX_RETRIES=2` 的 SDK 重试——**慢生成的单次请求在 r2 结构上不可能超过 90s 完成**，重试只能在残余窗口内碰运气。
   2. planner 超时 → `_planner_timeout_result`（L311-354）**立即 terminate=yes**，一格只有一次机会；executor 超时 → 步中止 + planner 重写 retry（L833-836），烧一轮 planner LLM（分析 §2.2"超时链"）。
-  3. planner 是 glm-5.3（非 flash，更慢），实测单次 planner 停顿达 95–168s——90s 对它是确定性偏紧；r1 的 helper 60s 级联在 r2 换位成 planner 90s 级联（分析 §5-C4）。
+  3. planner 是 glm-5.3（非 flash，更慢），实测 planner 停顿达 95–168s——在 90s 双层墙下这类"单次停顿"测量只能是"90s 掐断 + provider 重试链"的间隔，恰证内层 timeout 在起作用；90s 对它是确定性偏紧，r1 的 helper 60s 级联在 r2 换位成 planner 90s 级联（分析 §5-C4）。
 - **拒绝的替代案（记录理由）**：
   - *全 agent 超时重试（wait_for 后重发）*：temperature=0 下重发同一 prompt 大概率同样慢，救不了慢生成，只把最坏暂停翻倍到 180s，直接吃掉 240s 页钟；429/连接类瞬断已由 provider 级 `LLM_MAX_RETRIES=2` 覆盖——冗余。
   - *planner max_tokens 截断*：planner 输出是单块 JSON，截断 → parse 失败 → 空 next_step → planner↔executor 空转循环（simple_hercules.py:685-698、_route_after_planner），风险不对称，不做。
-- **改法**：新 env `LLM_PLANNER_REQUEST_TIMEOUT`（默认 0=跟随 `LLM_REQUEST_TIMEOUT`，即 r2 的 90s），`_llm_ainvoke` 对 `agent_name=="planner_agent"` 使用之。headline 注入 150s：覆盖实测 p99（168s 中的长尾例外接受），N/O-B 四格从"90s 即死"变为"150s 内完成即活"（这些格引擎余量 510s、任务本身 <60s）。
+- **改法**：新 env `LLM_PLANNER_REQUEST_TIMEOUT`（默认 0=跟随 `LLM_REQUEST_TIMEOUT`，即 r2 的 90s），**同源喂两层**——外层 `_llm_ainvoke` 对 `agent_name=="planner_agent"` 使用之，且 planner 的 ChatOpenAI provider 层 timeout 兜底同改用该 helper（只改 wait_for 一层则 >90s 单次生成仍被 provider 层 90s 掐断，150s 兑现不了——review-r3 M2）。headline 注入 150s：覆盖实测长尾（168s 中的 p99.9 例外接受），N/O-B 四格从"90s 即死"变为"150s 内完成即活"（这些格引擎余量 510s、任务本身 <60s）。
 - **开关**：orchestrator `--planner-timeout <int>`（默认 0=off）→ env 注入。预期救回：N 2 格 ~0.8 + O-B 2 格 ~0.45（分析 Top-10 #1/#7），并削减 25 格中的 planner 重写循环（T-B 保守 3 的另一部分）。
 
 ### R3-3（C）drag 工具修复（选择器透传 + 文本兜底），带 pilot kill-switch；坐标拖拽不做
@@ -132,10 +132,10 @@ token 预算：r2 全程 9.08M 在 coding plan 额度内；r3 预估同量级或
 
 | 口径 | 保守 | 上界 | 构成 |
 |---|---|---|---|
-| **r3 headline 干净口径**（125 分母，E1 后预期 invalid≈0） | **63/125 = 50.4%** | **77/125 = 61.6%** | r2 等价基线 58 + A/B +5~12（T-B 9/3、N+O-B +2~3、T-A 顺带）+ C +1~3 + F +1~4 |
-| r3 D-ablation 臂（480s/900s，另批） | 69/125 = 55.2% | 93/125 = 74.4% | headline + T-A 16/6（分析 §2.4），同 flags 可配对 |
+| **r3 headline 干净口径**（125 分母，E1 后预期 invalid≈0） | **65/125 = 52.0%** | **77/125 = 61.6%** | r2 等价基线 58 + A/B +5~12（T-B 9/3、N+O-B +2~3、T-A 顺带）+ C +1~3 + F +1~4；保守档复算 58+5+1+1 = **65** ✓（review-r3 M3） |
+| r3 D-ablation 臂（480s/900s，另批） | **71/125 = 56.8%** | 93/125 = 74.4% | headline + T-A 16/6（分析 §2.4），同 flags 可配对；保守 65+6=71 |
 
-诚实备注：保守档 50.4% 贴线达标，主张主要押在 A+B 的证据强度上；r1→r2 的模型噪声幅度 ±6 格提示单轮波动可能吞掉贴线优势——若 headline 落在 60–62/125（48.0–49.6%），以 M3 复盘归因后由总编排代理决定是否以 retry 池外的定向复跑（需另行批准并披露）补证，绝不改判分。
+诚实备注：保守档 65/125 = 52.0%（构成 58+5+1+1，可复算），较 50% 主张留 2 格缓冲，主张主要押在 A+B 的证据强度上；r1→r2 的模型噪声幅度 ±6 格提示单轮波动可能吞掉缓冲——若 headline 落在 60–62/125（48.0–49.6%），以 M3 复盘归因后由总编排代理决定是否以 retry 池外的定向复跑（需另行批准并披露）补证，绝不改判分。
 
 ## 7. 风险表
 

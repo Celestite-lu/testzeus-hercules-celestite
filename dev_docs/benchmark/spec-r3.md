@@ -23,16 +23,17 @@ def get_nav_max_completion_tokens() -> int:
     return max(0, _env_int("NAV_MAX_COMPLETION_TOKENS", 0))
 ```
 
-- `create_chat_model`（L89-102）在 timeout/max_retries 兜底之后追加：
+- **运行时现状（r2 真实基线，review-r3 M1）**：benchmark 必经路径上 `adapt_llm_params_for_model` 被调用两次——`SimpleHercules.create` 对 planner/nav/helper 三个 config 原地 adapt（simple_hercules.py:152-160；benchmark 走 `SimpleHercules.create`，runner.py:71），`create_chat_model` 内部再 adapt 一次（llm_helper.py:83）。GLM 模型名落入 model_utils.py:69-70 的 "other models" 分支：`max_tokens` 缺失即注入 **4096**。即 r2 的 nav/planner 补全存在 4096 硬上限（实测肥尾 2000–3400 token 与之相容），且 **kwargs["max_tokens"] 在 benchmark 路径永不为 None**——注入逻辑必须是显式覆盖，`is None` 兜底是死代码。
+- `create_chat_model`（L89-102）在 timeout/max_retries 兜底之后追加（**env > 0 时无条件覆盖** adapt 注入的 4096 与任何显式传入值；优先级写死为 env 最高——生成的 config 文件从不带 max_tokens，无实际冲突面）：
 
 ```python
-if kwargs.get("max_tokens") is None:
-    nav_cap = get_nav_max_completion_tokens()
-    if nav_cap > 0:
-        kwargs["max_tokens"] = nav_cap
+nav_cap = get_nav_max_completion_tokens()
+if nav_cap > 0:
+    kwargs["max_tokens"] = nav_cap
 ```
 
-- 消费面：`create_chat_model` 的全部调用方 = 各 nav agent（`base_nav_agent.py:67` 及 multimodal 变体）与 helper 多模态单例（benchmark 不触发，披露即可）。**planner 不经过此函数**（`high_level_planner_agent.py:37-57` 裸 ChatOpenAI），因此天然不受影响——planner 交给 §2。
+- 消费面：`create_chat_model` 的全部调用方 = 各 nav agent（`base_nav_agent.py:66` 及 multimodal 变体）与 helper 多模态单例——后者由 `_initialize_agents`（simple_hercules.py:190-193）在**每次 benchmark 都构造**（经 `create_chat_model`），故 helper 同样吃 768 cap（image-comparer 在文本 DOM benchmark 中不被调用，无实际影响，如实披露）。**planner 不经过此函数**（`high_level_planner_agent.py:37-57` 裸 ChatOpenAI，其 `max_tokens=4096` 来自 create() 的 adapt 注入），保持 4096 不变——planner 的延迟交给 §2。
+- 语义口径：R3-1 = **把 4096 收紧到 768**，不是"从无上界到 768"。
 - 截断语义：`finish_reason=length` 的截断由 LangChain 正常返回；断裂的工具调用参数会在执行层报错并作为 ToolMessage 错误回灌（现有 `_execute_tool_call` 路径），agent 下一轮自行缩短。不做截断重试、不做特殊提示（最简单确定性行为）。
 
 ### 1.2 orchestrator
@@ -72,9 +73,15 @@ timeout = (
 
 - 超时消息格式与 `_planner_timeout_result`（L311-354）**逐字节不变**（`{timeout:g}s` 自然反映新值）；不做重试（plan-r3 R3-2 拒绝理由）。
 
-### 2.3 orchestrator
+### 2.3 `testzeus_hercules/core/agents/high_level_planner_agent.py`（provider 层 timeout 同源化——review-r3 M2）
 
-- CLI `--planner-timeout`（type=int，default 0）；`> 0` 时 `_child_extra_env` 注入 `LLM_PLANNER_REQUEST_TIMEOUT=str(planner_timeout)`；`flags["planner_timeout"]`。headline 取 150。与 `--latency-env`（`LLM_REQUEST_TIMEOUT=90`，LATENCY_ENV_OVERRIDES **原值不动**）叠加：planner 150 / 其余 90。
+- 现状：planner 的 ChatOpenAI 自身 `timeout` kwarg 兜底为 `get_llm_request_timeout_seconds()`（L53-54）。headline 的 `LLM_REQUEST_TIMEOUT=90` 同时喂外层 wait_for 与该 provider timeout——若只改 §2.2 的 wait_for，**>90s 的单次 planner 生成依然会被 provider 层在 90s 掐断**（随后进入 `LLM_MAX_RETRIES=2` 的 SDK 重试链），150s 外层窗口等不到完整返回。
+- 改动：L54 兜底改为 `safe_llm_params["timeout"] = get_llm_planner_request_timeout_seconds()`（import 同步）。env 未设时两个 helper 同值返回 → **off = r2 逐字节一致**仍成立；headline 注入 150 后 planner 的 wait_for 与 provider timeout **同为 150s**，单次 >90s 的慢生成可完整返回。
+- nav/helper 的 provider timeout **不变**（仍 `get_llm_request_timeout_seconds`，llm_helper.py:94-95）——executor 的 90s 由 R3-1 的 768 cap 兜住延迟，无需放宽。
+
+### 2.4 orchestrator
+
+- CLI `--planner-timeout`（type=int，default 0）；`> 0` 时 `_child_extra_env` 注入 `LLM_PLANNER_REQUEST_TIMEOUT=str(planner_timeout)`；`flags["planner_timeout"]`。headline 取 150。与 `--latency-env`（`LLM_REQUEST_TIMEOUT=90`，LATENCY_ENV_OVERRIDES **原值不动**）叠加：planner 的 wait_for 与 provider timeout **同为 150**（§2.2+§2.3 同源）、其余 agent 保持 90。
 
 ## 3. R3-3 drag_and_drop 选择器透传（`--extra-tools` 加载面内生效，无新 flag）
 
@@ -228,9 +235,9 @@ if str(get_global_conf().get_config().get("PLANNER_ASSERT_DISCIPLINE") or "").st
 
 ## 8. 离线单测清单（`tests/record2gherkin/`，不跑真 LLM；零真实网络；env 用 monkeypatch.setenv 隔离）
 
-**T1 nav 补全上限**：env `NAV_MAX_COMPLETION_TOKENS=768` → `create_chat_model` 产物 `max_tokens==768`；env 未设或 `"0"` → `max_tokens` 为 None（r2 复现）；`llm_config_params={"max_tokens": 256}` 显式传入时 env 不覆盖（显式优先）；planner 路径（`PlannerAgent` 的 stub llm 捕获 kwargs）永不含该 cap。
+**T1 nav 补全上限**（断言对象 = adapt 注入后的运行时值）：env 未设或 `"0"` → `create_chat_model` 产物 `max_tokens == 4096`（r2 真实基线复现，model_utils 兜底生效）；env `NAV_MAX_COMPLETION_TOKENS=768` → `max_tokens == 768`（无条件覆盖 4096）；显式 `llm_config_params={"max_tokens": 256}` + env 768 → `768`（锁定"env 最高优先级"语义）；显式 256 + env 未设 → `256`（无 env 时现状不变）；planner 路径（`PlannerAgent` 的 stub llm 捕获 kwargs）保持 `max_tokens == 4096`、永不含该 cap。
 
-**T2 planner 超时分档**：`SimpleHercules.__new__` 绕过 init 后调 `_llm_ainvoke`，stub llm 的 `ainvoke` sleep 超限：env `LLM_PLANNER_REQUEST_TIMEOUT=5` + `LLM_REQUEST_TIMEOUT=1` → `agent_name="planner_agent"` 在 ~5s 内不抛、`"browser_nav_agent"` 在 ~1s 抛 TimeoutError 且消息含 `1s`；env 未设 → 两者同为 `LLM_REQUEST_TIMEOUT` 值；非法值回退不抛异常。
+**T2 planner 超时分档（双层）**：`SimpleHercules.__new__` 绕过 init 后调 `_llm_ainvoke`，stub llm 的 `ainvoke` sleep 超限：env `LLM_PLANNER_REQUEST_TIMEOUT=5` + `LLM_REQUEST_TIMEOUT=1` → `agent_name="planner_agent"` 在 ~5s 内不抛、`"browser_nav_agent"` 在 ~1s 抛 TimeoutError 且消息含 `1s`；env 未设 → 两者同为 `LLM_REQUEST_TIMEOUT` 值；非法值回退不抛异常。**provider 层同源**（stub ChatOpenAI 捕获构造 kwargs）：env `LLM_PLANNER_REQUEST_TIMEOUT=150` → `PlannerAgent` 产物 `timeout == 150` 且 `max_tokens == 4096`（不受 R3-1 影响），nav agent（`create_chat_model`）产物 `timeout == 90`；env 未设 → 两者 `timeout` 同为 90（r2 复现）。
 
 **T3 extra_tools 子集**（subprocess 隔离，避免 config 单例污染）：子进程 env `LOAD_EXTRA_TOOLS=true` + `EXTRA_TOOLS_MODULES=drag_and_drop_tool` → import 包后 `drag_and_drop` 在命名空间、`persist_findings`/`read_clipboard` 不在；无 `EXTRA_TOOLS_MODULES` → 两者均在（r2 全量复现）；`EXTRA_TOOLS_MODULES=` 空串 → 全量。
 
