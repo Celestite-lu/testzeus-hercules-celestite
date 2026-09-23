@@ -1256,6 +1256,10 @@ class Orchestrator:
         for row in metrics_module.load_rows(self.results_path):
             if row.get("status") not in INFRA_STATUSES:
                 continue
+            # security-review-r3-pre F1：带安全事件标记的行不进重试池——重试"洗干净"会弱化 clean 口径
+            if row.get("invalid_reason"):
+                logger.info("orchestrator: %s has invalid_reason=%s, excluded from the retry pool", row.get("task_id"), row.get("invalid_reason"))
+                continue
             seed = row.get("seed")
             if not isinstance(seed, int) or isinstance(seed, bool):
                 continue
