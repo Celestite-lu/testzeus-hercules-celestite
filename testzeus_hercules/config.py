@@ -538,6 +538,8 @@ class BaseConfigManager:
             "GEOLOCATION",
             "COLOR_SCHEME",
             "LOAD_EXTRA_TOOLS",
+            # spec-r3 §5.1 (E1): extra_tools subset allowlist (csv of module names; empty = full load)
+            "EXTRA_TOOLS_MODULES",
             # r2 latency pack (spec-r2 §5.1): env names mirror the config keys; defaults keep r1 behaviour
             "BROWSER_STATE_REFRESH_MODE",
             "BROWSER_NAV_MAX_CHAT_ROUND",
@@ -576,6 +578,10 @@ class BaseConfigManager:
             "SANDBOX_TENANT_ID",
             "SANDBOX_PACKAGES",
             "SANDBOX_CUSTOM_INJECTIONS",
+            # spec-r3 §5.5 (E5): benchmark kill switch for the Python sandbox tool
+            "SANDBOX_DISABLED",
+            # spec-r3 §6 (R3-6/F): planner assertion-discipline prompt preamble
+            "PLANNER_ASSERT_DISCIPLINE",
         ]
 
         for key in relevant_keys:
@@ -666,6 +672,8 @@ class BaseConfigManager:
         self._config.setdefault("BROWSER_RESOLUTION", "1920,1080")
         self._config.setdefault("RUN_DEVICE", "desktop")
         self._config.setdefault("LOAD_EXTRA_TOOLS", "false")
+        # spec-r3 (E1): empty allowlist = full extra_tools load (r2 behaviour)
+        self._config.setdefault("EXTRA_TOOLS_MODULES", "")
         # r2 latency pack (spec-r2 §5.1): "always"/50/0 are byte-for-byte the r1 behaviours.
         self._config.setdefault("BROWSER_STATE_REFRESH_MODE", "always")
         self._config.setdefault("BROWSER_NAV_MAX_CHAT_ROUND", "50")
@@ -727,6 +735,8 @@ class BaseConfigManager:
         self._config.setdefault("SANDBOX_TENANT_ID", "")  # No default tenant
         self._config.setdefault("SANDBOX_PACKAGES", "")  # No default packages
         self._config.setdefault("SANDBOX_CUSTOM_INJECTIONS", "{}")  # No default custom injections
+        self._config.setdefault("SANDBOX_DISABLED", "false")  # spec-r3 (E5): sandbox enabled by default
+        self._config.setdefault("PLANNER_ASSERT_DISCIPLINE", "false")  # spec-r3 (F): off by default
 
         # LLM Model Configuration defaults
         # --------------------------------------------------
@@ -995,6 +1005,10 @@ class BaseConfigManager:
     def get_load_extra_tools(self) -> str:
         return self._config["LOAD_EXTRA_TOOLS"]
 
+    def get_extra_tools_modules(self) -> str:
+        """spec-r3 (E1): csv allowlist of extra_tools module names; empty string = full load (r2 parity)."""
+        return self._config.get("EXTRA_TOOLS_MODULES", "")
+
     def get_locale(self) -> str:
         return self._config["LOCALE"]
 
@@ -1198,6 +1212,15 @@ class BaseConfigManager:
             Example: '{"modules": ["jwt"], "custom_objects": {"API_KEY": "xyz"}}'
         """
         return self._config.get("SANDBOX_CUSTOM_INJECTIONS", "{}")
+
+    def get_sandbox_disabled(self) -> str:
+        """
+        spec-r3 (E5): "true" disables the Python sandbox tool entirely (benchmark mode).
+
+        Returns:
+            The raw SANDBOX_DISABLED config value ("false" by default).
+        """
+        return self._config.get("SANDBOX_DISABLED", "false")
 
 
 # ------------------------------------------------------------------------------

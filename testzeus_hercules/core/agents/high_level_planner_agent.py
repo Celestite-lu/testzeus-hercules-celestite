@@ -2,12 +2,19 @@ from string import Template
 from typing import Any
 
 from langchain_openai import ChatOpenAI
+from testzeus_hercules.config import get_global_conf
 from testzeus_hercules.core.memory.static_ltm import get_user_ltm
 from testzeus_hercules.utils.llm_helper import (
     get_llm_max_retries,
-    get_llm_request_timeout_seconds,
+    get_llm_planner_request_timeout_seconds,
 )
 from testzeus_hercules.utils.logger import logger
+
+#: spec-r3 §6 (R3-6): verbatim discipline preamble prepended to the planner system message when
+#: PLANNER_ASSERT_DISCIPLINE=true.  It only constrains the is_passed=true premise, never terminate itself.
+_ASSERT_DISCIPLINE_INSTRUCTION = """ASSERTION DISCIPLINE: Before responding with terminate=yes and is_passed=true, the LAST helper observation must explicitly confirm that the requested action (including any required submit) was actually performed. If the last observation reports a failure, a timeout, does not mention the action, or is inconclusive, you must set is_passed=false and describe what is missing. Never base is_passed on your instruction alone.
+
+"""
 
 
 class PlannerAgent:
@@ -27,6 +34,11 @@ class PlannerAgent:
 
         self.system_message = Template(base_prompt).safe_substitute(basic_test_information=user_ltm if user_ltm else "No test data provided")
         self.system_message = self._json_instruction + self.system_message
+
+        # spec-r3 §6 (R3-6): optional assertion-discipline preamble, opt-in via PLANNER_ASSERT_DISCIPLINE.
+        # Off (default) keeps system_message byte-identical to r2.
+        if str(get_global_conf().get_config().get("PLANNER_ASSERT_DISCIPLINE") or "").strip().lower() == "true":
+            self.system_message = _ASSERT_DISCIPLINE_INSTRUCTION + self.system_message
 
         # Normalize model key: ChatOpenAI expects 'model', not 'model_name'
         normalized = dict(model_config)
@@ -51,7 +63,9 @@ class PlannerAgent:
 
         safe_llm_params.pop("model", None)  # avoid duplicate with filtered
         if "timeout" not in filtered and safe_llm_params.get("timeout") is None:
-            safe_llm_params["timeout"] = get_llm_request_timeout_seconds()
+            # spec-r3 §2.3 (R3-2): same-source as the outer wait_for — the provider layer must not
+            # cut a slow planner generation short while the graph-level window allows more time.
+            safe_llm_params["timeout"] = get_llm_planner_request_timeout_seconds()
         if "max_retries" not in filtered and safe_llm_params.get("max_retries") is None:
             safe_llm_params["max_retries"] = get_llm_max_retries()
         self.llm = ChatOpenAI(**filtered, **safe_llm_params)

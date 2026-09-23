@@ -59,6 +59,13 @@ async def execute_python_sandbox(
         - SANDBOX_TENANT_ID: Determines tenant-specific module access
         - SANDBOX_CUSTOM_INJECTIONS: JSON string with custom modules/objects to inject
     """
+    # spec-r3 §5.5 (E5): benchmark kill switch — refuse before any tenant read or log marker so a
+    # disabled environment never reaches the sandbox path.  The refusal text carries the
+    # [SANDBOX_DISABLED] marker that the orchestrator scan maps to sandbox_tool_invoked.
+    if get_global_conf().get_sandbox_disabled().strip().lower() == "true":
+        logger.warning("[SANDBOX_DISABLED] execute_python_sandbox refused (disabled for this environment)")
+        return "Python sandbox is disabled in this environment ([SANDBOX_DISABLED])."
+
     logger.info("Executing Python sandbox: file=%s, timeout=%ss", file_path, timeout_seconds)
     add_event(EventType.INTERACTION, EventData(detail="execute_python_sandbox"))
 
