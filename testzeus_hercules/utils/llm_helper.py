@@ -57,6 +57,24 @@ def get_llm_max_retries() -> int:
     return _env_int("LLM_MAX_RETRIES", DEFAULT_LLM_MAX_RETRIES)
 
 
+def get_nav_max_completion_tokens() -> int:
+    """Completion-token cap for nav/executor chat models. 0 (default) = uncapped (r2 behaviour)."""
+    return max(0, _env_int("NAV_MAX_COMPLETION_TOKENS", 0))
+
+
+def get_llm_planner_request_timeout_seconds() -> float:
+    """Per-request timeout for the planner node. <=0 / unset → follow LLM_REQUEST_TIMEOUT (r2 parity)."""
+    raw = os.getenv("LLM_PLANNER_REQUEST_TIMEOUT")
+    if raw is None or raw == "":
+        return get_llm_request_timeout_seconds()
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid LLM_PLANNER_REQUEST_TIMEOUT=%r; following LLM_REQUEST_TIMEOUT.", raw)
+        return get_llm_request_timeout_seconds()
+    return value if value > 0 else get_llm_request_timeout_seconds()
+
+
 def convert_model_config_to_langchain_format(
     model_config: dict[str, str],
 ) -> dict[str, Any]:
@@ -95,6 +113,12 @@ def create_chat_model(
         kwargs["timeout"] = get_llm_request_timeout_seconds()
     if kwargs.get("max_retries") is None:
         kwargs["max_retries"] = get_llm_max_retries()
+    # spec-r3 §1.1 (R3-1): env > 0 unconditionally overrides the adapt-injected 4096 (and any
+    # explicit value) — on the benchmark path max_tokens is never None, so an `is None` guard
+    # would be dead code.  0 (default) keeps the r2 behaviour untouched.
+    nav_cap = get_nav_max_completion_tokens()
+    if nav_cap > 0:
+        kwargs["max_tokens"] = nav_cap
     base_url = model_config.get("base_url") or model_config.get("model_base_url")
     if base_url:
         kwargs["base_url"] = base_url

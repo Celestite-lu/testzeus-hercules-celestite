@@ -38,6 +38,7 @@ from testzeus_hercules.utils.llm_helper import (
     GraphChatResult,
     convert_model_config_to_langchain_format,
     create_multimodal_agent,
+    get_llm_planner_request_timeout_seconds,
     get_llm_request_timeout_seconds,
 )
 from testzeus_hercules.utils.logger import logger
@@ -278,7 +279,9 @@ class SimpleHercules:
         return [HumanMessage(content=f"COMPRESSED HISTORY (context limit reached):\n{summary}")]
 
     async def _llm_ainvoke(self, llm: Any, messages: list[AnyMessage], agent_name: str) -> Any:
-        timeout = get_llm_request_timeout_seconds()
+        # spec-r3 §2.2 (R3-2): the planner gets its own per-request window (LLM_PLANNER_REQUEST_TIMEOUT,
+        # default = LLM_REQUEST_TIMEOUT for r2 parity); every other agent keeps the shared timeout.
+        timeout = get_llm_planner_request_timeout_seconds() if agent_name == "planner_agent" else get_llm_request_timeout_seconds()
         try:
             return await asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)
         except asyncio.TimeoutError as e:

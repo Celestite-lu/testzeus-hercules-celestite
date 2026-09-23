@@ -9,6 +9,7 @@ from testzeus_hercules.config import get_global_conf
 from testzeus_hercules.core.browser_logger import get_browser_logger
 from testzeus_hercules.core.playwright_manager import PlaywrightManager
 from testzeus_hercules.core.tools.tool_registry import tool
+from testzeus_hercules.telemetry import EventData, EventType, add_event
 from testzeus_hercules.utils.logger import logger
 
 
@@ -89,6 +90,15 @@ async def open_url(
             )
 
             return f"Navigated to {special_url}, Title: {title}"
+
+        # spec-r3 §5.3 (E3): scheme whitelist before any navigation path — only http/https pass.
+        # javascript:/data:/file:/vbscript:/unknown schemes are rejected with no navigation at all;
+        # scheme-less inputs fall through to ensure_protocol (https default, existing behaviour).
+        scheme = (urlsplit(url).scheme or "").lower()
+        if scheme and scheme not in ("http", "https"):
+            logger.warning("[OPEN_URL_BLOCKED] scheme=%s url=%s", scheme, url)
+            add_event(EventType.INTERACTION, EventData(detail=f"open_url_blocked:{scheme}"))
+            return f"Blocked URL scheme '{scheme}:' — only http:// and https:// are allowed. URL rejected: {url}"
 
         url = ensure_protocol(url)
         if urls_match_for_navigation(page.url, url):

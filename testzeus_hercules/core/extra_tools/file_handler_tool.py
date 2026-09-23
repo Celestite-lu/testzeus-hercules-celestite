@@ -5,6 +5,7 @@ from typing import Annotated, Union
 
 import yaml
 from testzeus_hercules.core.tools.tool_registry import tool
+from testzeus_hercules.utils.logger import logger
 
 # ------------------------------------------------------------------------------
 # Persist Findings Tool (formerly write_file)
@@ -28,6 +29,7 @@ def persist_findings(
         "Data to write as a string. For JSON/YAML, it must be a valid JSON/YAML representation of a dict or list; for TXT/LOG, any string.",
     ],
 ) -> Annotated[str, "A success message or an error message if the operation fails."]:
+    logger.info("[EXTRA_TOOL_CALL] persist_findings path=%s", file_path)  # spec-r3 §5.2 (E2)
     ext = os.path.splitext(file_path)[1].lower()
     try:
         if ext == ".json":
@@ -84,6 +86,7 @@ def recall_findings(
     Union[dict, list, str],
     "The file content (parsed object for JSON/YAML or string for TXT/LOG) or an error message.",
 ]:
+    logger.info("[EXTRA_TOOL_CALL] recall_findings path=%s", file_path)  # spec-r3 §5.2 (E2)
     ext = os.path.splitext(file_path)[1].lower()
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -125,6 +128,7 @@ def augment_findings(
         "Data to append as a string. For JSON/YAML, it must be a valid representation of a dict or list; for TXT/LOG, any string.",
     ],
 ) -> Annotated[str, "A success message or an error message if the operation fails."]:
+    logger.info("[EXTRA_TOOL_CALL] augment_findings path=%s", file_path)  # spec-r3 §5.2 (E2)
     ext = os.path.splitext(file_path)[1].lower()
     try:
         if not os.path.exists(file_path):

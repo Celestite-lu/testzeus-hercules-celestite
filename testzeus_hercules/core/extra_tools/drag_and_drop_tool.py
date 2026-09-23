@@ -8,29 +8,41 @@ from testzeus_hercules.core.tools.tool_registry import tool
 from testzeus_hercules.telemetry import EventData, EventType, add_event
 from testzeus_hercules.utils.logger import logger
 
+#: spec-r3 §3.1 (R3-3): selector shapes that are already valid Playwright selectors and must be
+#: passed to find_element verbatim (never wrapped into the md attribute form).
+_EXPLICIT_SELECTOR_PREFIXES = ("css=", "xpath=", "text=", "id=", "aria=", "role=")
+
 
 @tool(
     agent_names=["browser_nav_agent"],
-    description="Performs drag and drop operation from source to target.",
+    description="Performs drag and drop from source to target. source_selector: any valid Playwright selector (CSS, XPath, 'text=…', '#id', '.class') or a bare md id; target_selector: any valid Playwright selector.",
     name="drag_and_drop",
 )
 async def drag_and_drop(
     source_selector: Annotated[
         str,
-        "Source element selector is md attribute value of the dom element to interact, md is an ID",
+        "Any valid Playwright selector (CSS, XPath, 'text=…', '#id', '.class') or a bare md id (digits are treated as the md attribute value).",
     ],
     target_selector: Annotated[
         str,
-        "Target element selector using any valid Playwright selector only (ARIA, CSS, XPath, etc.)",
+        "Any valid Playwright selector (CSS, XPath, ARIA, etc.).",
     ],
     wait_before_execution: Annotated[float, "Wait time before drag and drop"] = 0.0,
 ) -> Annotated[str, "Drag and drop operation result"]:
 
-    selector = source_selector
-    if "md=" not in selector:
-        selector = f"[md='{selector}']"
+    # spec-r3 §3.1 (R3-3): parse the source into ordered candidates — explicit Playwright selectors
+    # pass through verbatim, only a bare md id (digits) keeps the r2 `[md='…']` fallback semantics.
+    raw = source_selector.strip()
+    if raw.startswith("md="):
+        candidates = [f"[md='{raw[3:].strip()}']"]
+    elif raw.startswith(_EXPLICIT_SELECTOR_PREFIXES) or raw[:1] in ("#", ".", "[", "/", "("):
+        candidates = [raw]  # 任意显式 Playwright 选择器逐字透传
+    elif raw.isdigit():
+        candidates = [f"[md='{raw}']", f"text='{raw}'"]  # 裸 md id（数字）——r2 兜底语义
+    else:
+        candidates = [raw, f"[md='{raw}']", f"text='{raw}'"]  # 未知形态：原样 → md 兜底 → 文本兜底
 
-    logger.info(f"Executing drag and drop from '{selector}' to '{target_selector}'")
+    logger.info(f"Executing drag and drop from '{raw}' to '{target_selector}'")
     add_event(EventType.INTERACTION, EventData(detail="drag_and_drop"))
 
     # Initialize PlaywrightManager and get the active browser page
@@ -45,10 +57,16 @@ async def drag_and_drop(
         if wait_before_execution > 0:
             await asyncio.sleep(wait_before_execution)
 
-        # Find source using md selector
-        source_element = await browser_manager.find_element(selector, page, element_name="drag_and_drop")
+        # Find source: try the candidates in order, first hit wins (spec-r3 §3.1)
+        source_element = None
+        for candidate in candidates:
+            found = await browser_manager.find_element(candidate, page, element_name="drag_and_drop")
+            if found is not None:
+                source_element = found
+                logger.info(f"Found source element using selector: {candidate}")
+                break
         if source_element is None:
-            raise ValueError(f"Source element with selector: '{selector}' not found")
+            raise ValueError(f"Source element not found using any of these selectors: {candidates}")
 
         # Find target using multiple selector strategies
         target_element = None
@@ -139,7 +157,7 @@ async def drag_and_drop(
             # Wait for animations and DOM updates
             await asyncio.sleep(get_global_conf().get_delay_time())
 
-            return f"Successfully performed drag and drop from '{selector}' to '{target_selector}'"
+            return f"Successfully performed drag and drop from '{raw}' to '{target_selector}'"
 
         except Exception as e:
 
