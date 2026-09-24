@@ -15,7 +15,7 @@
 |---|---|---|---|
 | **A. 零样本/文本-DOM（最可比）** | GPT-4 agent（"The Unsolved Challenges of LLMs as Generalist Web Agents", NeurIPS 2023） | ~47% 全任务集 | 零样本文本观察 |
 | A | BrowserGym/WorkArena 系 GPT-4 基线 | ~50-59% | 依赖观察格式，AST 优于裸 DOM 文本 |
-| A | Agent-E（125 challenging instances） | 81.6% exact-match | Hercules 的直系前身，**本项目的冲刺锚点** |
+| A | ~~Agent-E（125 challenging instances）~~ **归属更正（2026-09-24，agent-e-anatomy.md 核实）**：81.6% 实为 **HxAgent**（arXiv 2608.15491）的数字，且口径不可比（偏科子集 5 任务族×25 实例、GPT-4o 多模态、每族 20 训练实例+8 few-shot 经验注入、金标动作序列判分、±34.6 方差）；**Agent-E 从未发表 MiniWoB++ 数字**（唯一数字为 WebVoyager 73.2%，GPT-4-Turbo 人工评判） | ~~81.6%~~ | ~~冲刺锚点~~ **降为背景参照，不作对比目标** |
 | B. 少样本/带演示 | Synapse（trajectory-as-exemplar） | ~99.2% | 64 任务子集+示例，不同 regime |
 | B | RCI（Reflection-Critique-Improvement, NeurIPS 2023） | 当时 SOTA | 少量演示 |
 | C. 训练模型 | WebGUM（Google, 多模态） | 94.2% | 专门训练 |
@@ -24,9 +24,10 @@
 ## 解读（写报告时的口径）
 
 1. 与我们同 regime（零样本、文本/DOM、全任务）的公开数字带为 **47-60%**——第一轮成绩落入或超过此带即具备公开可比性
-2. Agent-E 的 81.6% 是同源架构的合理冲刺目标（SOTA-for-regime 锚点）
+2. ~~Agent-E 的 81.6% 是同源架构的合理冲刺目标~~ **更正：81.6% 属 HxAgent 且口径不可比（训练+few-shot 经验注入+偏科子集+金标判分），不再作为冲刺锚点**；我方 61.6% 已越出 A 档带上沿，即当前 regime 下已处于公开数字的领先区间
 3. B/C 档（带演示/训练模型 94-99%）**不是公平对照**，报告只作背景提及，不得直接对比
-4. 设置差异必须逐条披露：240s 放宽、Gherkin 中转、deepseek-v4-pro（非 GPT-4）、单 seed 单次
+4. 设置差异必须逐条披露：240s 放宽、Gherkin 中转、GLM（planner glm-5.3/nav glm-5.3-flash）、单 seed 单次
+5. r1 报告曾引用"Agent-E 81.6% 锚点"（当时检索来源的归属错误）——历史报告原文保留，本节为权威更正
 
 ## 来源
 
@@ -34,4 +35,5 @@
 - Synapse: Trajectory-as-Exemplar Prompting（OpenReview）
 - WebGUM / mm-webnav（Google 项目页）
 - BrowserGym 生态系统与 WorkArena 基线（ServiceNow+MILA）
-- Agent-E（EmergenceAI，arXiv 2407.13032 系）
+- Agent-E（EmergenceAI，arXiv 2407.13032；其仓库 HEAD 与论文均无 MiniWoB++ 数字）
+- HxAgent（arXiv 2608.15491；81.6% 的真实出处，设置详见 agent-e-anatomy.md）
