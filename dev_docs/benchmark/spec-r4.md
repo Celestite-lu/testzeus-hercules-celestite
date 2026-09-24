@@ -9,7 +9,7 @@
 ## 0. r4 运行前置（硬 gate）
 
 1. C1c 余额预检、C1b 熔断器、429 熔断标记、`--max-cells` 配速、attempt 分目录日志——全部沿用 r3，零改动。
-2. 预算：`R2_BUDGET_CAP = 144` 沿用。pilot+smoke 14 + headline 130 = 144 恰满；M4/M5 臂独立 exp-id/exp-root 另批另计（§6）。
+2. 预算：`R2_BUDGET_CAP = 144` 沿用。**pilot+smoke 计提重试 = 14–16**（`RETRY_BUDGET={"pilot":2,"full":5}`，smoke 不重试）+ headline ≤130/调用；cap 为单次调用强制，跨调用总盘按 plan-r4 §5 全局累计护栏约束（目标 ≤144，结构性最坏 146 须量化披露）。M4/M5 臂独立 exp-id/exp-root 另批另计（§6）。
 3. headline 命令见 plan-r4 §3；默认命令（无 r4 flag）= r3 行为复现 + R4-E 披露增强。
 4. **r3 遗留表述修正**：r4 headline 命令**不含** `--nav-max-tokens`（CLI 保留不删，兼容旧行为；安全复审 §5 实证 no-op）。凡 r4 报告引用 r2/r3 flags 表，`nav_max_tokens=768` 必须带"注入成功、provider 未生效"标注。
 
@@ -28,7 +28,7 @@ def get_md_interactive_extended(self) -> str:
 ### 1.2 `core/tools/get_interactive_elements.py`（死因修复点）
 
 - 现状死因（r4-A 立项根据，实现者须知）：`flatten_elements`（L44-89）只收录 `node.get("r","")` ∈ 白名单 role（**`r` 键在现行管线中不存在——`rename_children` 未被调用，实际键是 `role`，此 role 匹配今天是死分支**）或 `tag` ∈ {a,button,input,select,textarea} 的带 md 节点。email 家族的 `.email-thread` 行（div）、`.star`/`.trash` 图标（span）注入了 md 但在终表被整批丢弃。
-- **重构（唯一目的：可测性；off 行为逐字节不变）**：把 L45-89 的 `flatten_elements`/`compact_value`/`compact_interactive_node` 原样提为模块级 `flatten_interactive_nodes(root, *, extended: bool, max_nodes: int = 150) -> list[dict]`，内部常量提为模块级 `INTERACTIVE_ROLES_BASE`（现 L47-64 字面量）、`INTERACTIVE_TAGS_BASE`（现 L82 集合）、`EXTENDED_TAGS = {"div","span","li","tr","td","th","img","label"}`、`EXTENDED_ROLES = {"row","cell","listitem","img"}`、`EXTENDED_IDENTITY_KEYS = ("name","title","description","text","aria-label","class","id")`。
+- **重构（唯一目的：可测性；off 行为逐字节不变）**：把 L45-89 的 `flatten_elements`/`compact_value`/`compact_interactive_node` 原样提为模块级 `flatten_interactive_nodes(root, *, extended: bool, max_nodes: int = 150) -> list[dict]`，内部常量提为模块级 `INTERACTIVE_ROLES_BASE`（现 L47-64 字面量）、`INTERACTIVE_TAGS_BASE`（现 L82 集合）、`EXTENDED_TAGS = {"div","span","li","tr","td","th","img","label"}`、`EXTENDED_ROLES = {"row","cell","listitem","img"}`、`EXTENDED_IDENTITY_KEYS = ("name","title","description","text","aria-label","class","id")`。**唯一例外（review-r4 MF-1）：`compact_interactive_node` 的 `allowed_keys`（现 L104-128）增 `"class"`**——无条件加入，但 off 模式下任何节点不带 class 键（§1.3 的属性表追加是 extended-only，且 compact 按 `key in node` 过滤），故 off 输出逐字节不变（T3a golden 与 T9 parity 锁定）。不加此键的后果（审查实测）：star span 原始节点 `{"md":11,"tag":"span","name":"Caralie","class":"star"}` 经 compact 后与 trash 同为 `{"md":11,"tag":"span","name":"Caralie"}`——name 系 flatten 父继承的同一发件人名，class 是 star/trash 唯一可辨别锚，剥离则图标在终表不可辨、T4 断言必然失败。
 - **收录判定**（按序短路，与现结构同形）：
 
 ```python
@@ -43,7 +43,7 @@ if "md" in node and (role_hit or tag_hit or node.get("clickable", False) or node
 
   其中 `roles = INTERACTIVE_ROLES_BASE | (EXTENDED_ROLES if extended else set())`。**off 语义核对**：extended=False 时 `role_hit` 仍只查 `r` 键、tag 集不变、`extra_hit` 恒 False——与现 L80-88 条件完全等价（r3 复现）。
 - **上限（只约束终表，不约束注入/判分）**：extended=True 时收录计数达 `max_nodes(150)` 即停止收录，并 `logger.warning("[R2G_MD_TRUNCATED] interactive table capped at %d (dropped >=%d)", max_nodes, <剩余数>)`；JSON 输出内**不加**哨兵节点。off 时上限不生效（现状无上限）。
-- 工具函数体改为调用 `flatten_interactive_nodes(extracted_data, extended=<get_md_interactive_extended()=="true">, max_nodes=150)`；其余（compact、json.dumps、空表返回 "Its Empty, try something else"）逐字节保留。
+- 工具函数体改为调用 `flatten_interactive_nodes(extracted_data, extended=<get_md_interactive_extended()=="true">, max_nodes=150)`；除 MF-1 的 allowed_keys 增 class 外，其余（compact 结构、json.dumps、空表返回 "Its Empty, try something else"）逐字节保留。
 - 父 name/title 向子继承的现有行为（L66-77，含对 child dict 的就地修改）原样保留。
 
 ### 1.3 `utils/get_detailed_accessibility_tree.py`（class 语义锚）
@@ -167,9 +167,9 @@ if (
 
 **T2 orchestrator 注入与 flags**：(a) r4 全开 → `_child_extra_env` = r3 headline 键集 + `MD_INTERACTIVE_EXTENDED`+`VERIFY_BEFORE_DONE`，**多一个键即失败**，且无 `NAV_MAX_COMPLETION_TOKENS`；(b) 默认（无 r4 flags）→ 两新 env 零出现、`flags` 中两键为 false；(c) manifest `flags` 含三个新键（`offseed_beacon` 恒 true）；(d) `LATENCY_ENV_OVERRIDES` 五键值不变（回归）。
 
-**T3 flatten 过滤器（纯单元）**：(a) off 模式 golden——固定合成树（含 role=button 节点、裸 md div、无 md 节点）输出与**现实现逐字节一致**（迁移前先固化 golden JSON）；(b) extended 收录：`{md, tag:'div', name:'Tisha'}`、`{md, tag:'span', class:'star'}`（无 name）、`{md, tag:'li', id:'x'}` 均收录；无任何 identity 键的 `{md, tag:'div'}` 不收录；(c) extended 的 role 白名单：`role:'row'/'cell'/'listitem'/'img'` 节点收录；(d) 上限：>150 收录截断 + caplog 含 `[R2G_MD_TRUNCATED]`，前 150 条保序；(e) off 模式 151+ 节点不截断（现状）。
+**T3 flatten 过滤器（纯单元）**：(a) off 模式 golden——固定合成树（含 role=button 节点、裸 md div、无 md 节点）输出与**现实现逐字节一致**（迁移前先固化 golden JSON；allowed_keys 已含 class 但 off 节点永不携带该键，golden 不受 MF-1 影响）；(b) extended 收录：`{md, tag:'div', name:'Tisha'}`、`{md, tag:'span', class:'star'}`（无 name）、`{md, tag:'li', id:'x'}` 均收录；无任何 identity 键的 `{md, tag:'div'}` 不收录；(c) extended 的 role 白名单：`role:'row'/'cell'/'listitem'/'img'` 节点收录；(d) 上限：>150 收录截断 + caplog 含 `[R2G_MD_TRUNCATED]`，前 150 条保序；(e) off 模式 151+ 节点不截断（现状）；(f) **compact 保留 class（MF-1）**：`{md, tag:'span', name:'Caralie', class:'star'}` 经终表输出仍含 `"class":"star"`，与同 name、`class:'trash'` 的条目可辨别（不因 compact 同形）。
 
-**T4 真浏览器注入/终表验证（Playwright；chromium 不可用时 pytest.skip，不失败）**：`http.server` 起临时端口服 `record2gherkin/benchmark/miniwob_html/`；打开 `miniwob/email-inbox.html`；点击 START 遮罩启动 genProblem（选择器以 vendored core.js 的 cover 结构为准，实现说明记录）；config 日志目录指 tmp；flag on 调 `do_get_accessibility_info(page, only_input_fields=False)` 后经 `flatten_interactive_nodes(extended=True)`：含 ≥1 个 class 含 `email-thread` 的条目、≥2 个 class ∈ {star, trash} 的条目、全部带 md；flag off：这些条目零出现（r3 复现）。同法对 `find-greatest.html`：flag on ≥4 个 `.card` 条目（name 为数字）。**本测试同时是 A 的注入层假设验证器（§1.3 降级授权的触发判据）**。
+**T4 真浏览器注入/终表验证（Playwright；chromium 不可用时 pytest.skip，不失败）**：`http.server` 起临时端口服 `record2gherkin/benchmark/miniwob_html/`；打开 `miniwob/email-inbox.html`；点击 START 遮罩启动 genProblem（选择器以 vendored core.js 的 cover 结构为准，实现说明记录）；config 日志目录指 tmp；flag on 调 `do_get_accessibility_info(page, only_input_fields=False)` 后断言对象为 **compact 之后的终表**（`flatten_interactive_nodes(extended=True)` 的返回值）：含 ≥1 条 class 含 `email-thread` 的条目、≥2 条 class ∈ {star, trash} 的条目且 star/trash 条目 class 值互异（锁定 MF-1：class 未被 compact 剥离）、全部带 md；flag off：这些条目零出现（r3 复现）。同法对 `find-greatest.html`：flag on ≥4 个 `.card` 条目（name 为数字）。**本测试同时是 A 的注入层假设验证器（§1.3 降级授权的触发判据）。**
 
 **T5 verify 路由**（`SimpleHercules.__new__` 绕 init + stub）：(a) flag on + terminate=yes + is_passed=True + verify_rounds=0 → `"verify"`；(b) `_verify_gate_node` 返回值恰为 spec §2.2 字典（next_step == `_VERIFY_STEP`、verify_rounds=1、terminate="no"）且 caplog 含 `[R2G_VERIFY]`；(c) verify_rounds=1 + 同条件 → `"end"`（硬上限）；(d) is_passed=False + terminate=yes → `"end"`（不核验）；(e) flag off + is_passed=True → `"end"`（r3 复现）。
 
@@ -179,7 +179,7 @@ if (
 
 **T8 补丁与服务端点**：(a) `patch_core_js(..., offseed_beacon=False)` 输出 == r3 版函数输出（golden 字节）；(b) True → 追加段含 `/__r2g_offseed` 与 `epstart` 且仍为纯 append（前缀字节不变）；(c) handler：POST 两端点 → jsonl 各一行、字段齐、204；坏 body 不 500；(d) 奖励端点 `/__r2g_reward` 行为零变化（回归）。
 
-**T9 工具输出 parity**：monkeypatch `do_get_accessibility_info` 返回固定树 → `get_interactive_elements` off 模式 JSON 与 r3 golden 一致（含空表文案分支）；extended 模式含新条目。`get_input_fields` off 不变、extended 产物含 class 字段（§1.3 披露的测试锚）。
+**T9 工具输出 parity**：monkeypatch `do_get_accessibility_info` 返回固定树 → `get_interactive_elements` off 模式 JSON 与 r3 golden 一致（allowed_keys 增 class 不影响——off 无节点带 class 键；含空表文案分支）；extended 模式含新条目且 class 字段在终表存活。`get_input_fields` off 不变、extended 产物含 class 字段（§1.3 披露的测试锚）。
 
 **T10 回归**：`tests/record2gherkin/` 全量绿；r3 的 T1–T12 语义不受影响（凡涉及 flatten 内部结构的既有用例按 T3 的模块级入口适配并在实现说明记录）。
 

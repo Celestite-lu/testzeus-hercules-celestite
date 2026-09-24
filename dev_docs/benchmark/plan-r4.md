@@ -20,10 +20,10 @@
 ### R4-A（主梁 1）md 覆盖扩展 = 交互元素终表过滤器扩展（engine flag `--md-extended`）——r1 以来首次动感知层
 
 - **证据**：分析 §4.2——email 家族 10 格两轮全灭（0/20），死法一致且与 seed 无关：行/图标不在 md 表 → agent 退而尝试一切语法全部被包进 `[md='…']` not found；email-inbox-forward r3 36 点击 36 败。Top-10 #1：全网格最大单杠杆（10 格，~0.4 过 / ~0.7 能正确交互）。现场定位：`flatten_elements` 过滤器（§0 表）；md 注入层已覆盖目标元素（cursor:pointer 路径），find-greatest 的 `.card.hidden`（cursor:pointer + innerText 数字）同被终表丢弃。
-- **改法（精确定义在 spec §2）**：flag 门控下 ① `flatten_elements` 增加 div/span/li/tr/td/th/img/label 形态节点的收编规则（须携带 name/title/description/text/aria-label/class/id 之一，杜绝无标识节点灌水）；② role 白名单扩 {row, cell, listitem, img}；③ `__fetch_dom_info` 的抓取属性表增 `class`（图标无文本，class="star"/"trash" 是唯一语义锚）；④ 终表硬上限 150 条（超限截断 + stdout `[R2G_MD_TRUNCATED]` 留痕）——上限只约束 md 表长度，不影响注入与判分。
+- **改法（精确定义在 spec §2）**：flag 门控下 ① `flatten_elements` 增加 div/span/li/tr/td/th/img/label 形态节点的收编规则（须携带 name/title/description/text/aria-label/class/id 之一，杜绝无标识节点灌水）；② role 白名单扩 {row, cell, listitem, img}；③ `__fetch_dom_info` 的抓取属性表增 `class`，且 compact 白名单同步放行 `class`（图标无文本，class="star"/"trash" 是唯一可辨别语义锚——审查实测不加则 star/trash 在终表同形，review-r4 MF-1）；④ 终表硬上限 150 条（超限截断 + stdout `[R2G_MD_TRUNCATED]` 留痕）——上限只约束 md 表长度，不影响注入与判分。
 - **判分立场**：感知层变更，判分中立（不触碰奖励/状态链），但**改变所有任务的 DOM 观察**——必须 flag 门控默认 off（off = r3 逐字节复现，含 `class` 属性与 role 集）。 headline 显式开启。
 - **kill-switch（M1 出口判据）**：离线浏览器测试（T3，vendored email-inbox.html 真页断言行/图标入表）+ 冒烟 2 格（email-inbox-forward、email-inbox-star-reply）stdout 出现对 md 表内条目的成功点击；若 T3 证明注入层缺口（md 根本不在行/图标上），授权最小修补 `isInteractiveElement`（如 `element.ownerDocument.defaultView.getComputedStyle` 的 iframe 安全取值），修补后 T3 复验；仍失败 → headline 去掉 `--md-extended` 并固化放弃声明（R3-3 先例）。
-- **预期救回**：保守 +4 / 上界 +8（email 10 格 ×0.35~0.5 + find-greatest ~0.5；hot-cold 的 `#touch-area` 依赖 jQuery 委托监听且无 cursor/tabindex，**A 大概率不覆盖**，如实记为不确定项，不进主张）。
+- **预期救回（可复算，构成表见 §6）**：保守 +3 / 上界 +5（email 10 格 ×0.3/×0.4——法定 Top-10 #1 的**通过**概率 ~0.4，"~0.7 能正确交互"不入通过算术；find-greatest 单格 0/1；hot-cold 的 `#touch-area` 依赖 jQuery 委托监听且无 cursor/tabindex，**A 大概率不覆盖**，如实记为不确定项，不进主张）。
 
 ### R4-B（主梁 2）终止前校验 = verify-before-done 路由层强制核验轮（engine flag `--verify-before-done`）
 
@@ -32,7 +32,7 @@
 - **与 C2 终局信号的交互**：核验观察里若页面已 endEpisode，agent 可见 `EPISODE ENDED` cue（C2 注入的中性文本）——有 cue = 页面已出裁决（官方判分本就页面权威）；无 cue = "尚未有页面裁决"的直接反证，planner 据此继续执行或改 `is_passed=false`。已 +1 的格不被核验轮损害（奖励先落盘，超时不回判，r3-post §4"反向桥接空"实证）。
 - **判分立场**：不改判分链（C1a、fetch /latest、last-wins 全不动），只改 agent 行为与 junit 诚实度；预期收益一半在"翻正"（agent 继续做完真过）一半在"拦谎"（junit 翻诚、NR 格要么继续做要么如实报败）。
 - **成本**：通过格（59）每格 +1 核验轮 ≈ +10–20s/格、+~0.3M token/轮全量——接受并披露。
-- **预期救回**：保守 +4 / 上界 +9（O-H 翻正 4~8 + NR 1~2，email-inbox-delete NR 格与 A 重叠只计一次）。
+- **预期救回（可复算，构成表见 §6）**：保守 +4 / 上界 +5（O-H 24 格 ×0.15/×0.2——法定 Top-10 #2 翻正 ~0.2，24×0.2≈5 为算术上界；NR 中仅 social-media/text-editor 2 格计 1，email-inbox-delete 归 A 的 email 10 格、不重复计）。
 
 ### R4-E（安全必办，判分中立，不带 flag——r3 E 类先例）off-seed 与零事件完整性包
 
@@ -95,7 +95,7 @@ headline flags 全集（manifest `flags` 记录）：r3 十项（去 nav_max_tok
 | 里程碑 | 内容 | 出口判据 | 预估 |
 |---|---|---|---|
 | M0 实现+单测 | spec-r4 全部改动 + 离线单测 T1–T10（含 T3 真 Playwright 浏览器测试）+ `make fmt`/`lint` 绿 + 既有 tests/record2gherkin 全绿 | spec §9 验收 1–2 | 0.5–1 天 |
-| M1 pilot+smoke | pilot 10 + A 冒烟 2（`--smoke-cells email-inbox-forward,email-inbox-star-reply`）+ B 冒烟 2（`--smoke-cells click-link,email-inbox-delete`，全开 flags） | A kill-switch 判定（§1-R4-A）；B 核验轮 ≤1/格、无 planner 循环；无 402 | 0.5 天（1 窗口） |
+| M1 pilot+smoke | pilot 10 + A 冒烟 2（`--smoke-cells email-inbox-forward,email-inbox-star-reply`）+ B 冒烟 2（`--smoke-cells click-link,email-inbox-delete`，全开 flags）；最坏 16（pilot retry ≤2，plan §5） | A kill-switch 判定（§1-R4-A）；B 核验轮 ≤1/格、无 planner 循环；无 402 | 0.5 天（1 窗口） |
 | M2 headline full | 125 格 + retry 5；配速翻倍下预期 1 个 5h 窗口收口（兜底 2 窗口） | 130 执行 ≤ 上限；manifest flags 完整；125 任务全覆盖 | 1–2 天 |
 | M3 复盘固化 | analysis-r4-failures.md + round4-report.md + security-review-r4-post.md 固化 | clean 口径数字 + 披露清单（A 表长遥测、B verify 轮计数与 junit 幻觉对照、E offseed/epstart/零事件清单）落档 | 0.5–1 天 |
 | M4 多 seed ablation（待批） | 门控：`(r4_clean − r3_clean) ≤ +6` 或 A/B 任一单杠杆归因不确定度 ≥±3 格时，由总编排提请用户批准后跑边缘集 majority-of-3（42–50 执行，独立 exp root） | 逐格 majority 表 + 方差带 ±3 对照；只作测量列 | +1 天 |
@@ -105,22 +105,40 @@ headline flags 全集（manifest `flags` 记录）：r3 十项（去 nav_max_tok
 
 ## 5. 预算表（执行数 = Hercules 子进程数）
 
+代码事实（review-r4 MF-3）：`RETRY_BUDGET = {"pilot": 2, "full": 5}`（orchestrator.py:101）；smoke 格永不重试；cap 强制是**按单次 orchestrator 调用**的（`self.hercules_runs` 每次 `run()` 重置），跨 M1/M2、跨断点续跑的总盘无工具强制。
+
 | 阶段 | 执行数 | 构成 | 上限校验 |
 |---|---:|---|---|
-| M1 pilot+smoke | 14 | 10 + smoke 4（smoke 永不重试） | R2_BUDGET_CAP=144 沿用 |
-| M2 headline full | 130 | 125 + retry 5 | **满足"r4 headline ≤130"约束（不含 pilot）**；144 总盘内 14+130=144 ✓ |
+| M1 pilot+smoke | **14–16** | 10 + smoke 4 + pilot retry ≤2（RETRY_BUDGET pilot=2；smoke 不重试） | 单次调用 cap 内 |
+| M2 headline full | **≤130 / 单次调用** | 125 + retry ≤5（RETRY_BUDGET full=5） | **满足"r4 headline ≤130"约束（每次调用口径）** |
+| **主线合计（M1+M2）** | **最坏 146** | | 无工具强制 → 全局累计护栏见下 |
 | M4 ms3 ablation | 42–50 | 边缘集 ×2 派生 seed，独立 exp-id/root，**另计** | 须用户批准 |
 | M5 480s 对照臂 | 135 | 同 flags + 480s/900s，**另计** | 须用户批准，默认不做 |
-| **合计（headline 主线）** | **144** | | 配速翻倍后 M2 预计 1–2 窗口；429 熔断兜底 |
+
+**全局累计护栏（纪律条款 + 账目义务）**：
+1. 每次 orchestrator 调用（含断点续跑）的实际执行数（planned + retried）记入 manifest；M3 报告固化主线累计账（Σ M1 + Σ M2，逐调用列明）。
+2. 主线累计目标 ≤144；**>144 即在报告量化披露**（结构性最坏 = 16+130 = 146，偏差 +2 全部为 pilot 域重试，≤1.4%）。
+3. 禁止以"再开一次调用"绕过累计账——M2 拆窗续跑时每次调用的重试池消耗同样入账。
+4. M4/M5 独立 exp 另批另计，不入主线盘。
 
 token 预算：r3 全程 12.9M；r4 预估 13–15M（B 核验轮 +~0.5–1M；A 扩表使 DOM 读取略增——上限 150 条封顶）。5h 窗口配速按"单段 140 格级"规划，中断即断点续跑。
 
 ## 6. 预期影响区间（对照 r3：官方 = clean 59/125 = 47.2%）
 
+**构成推导（review-r4 MF-2 后重推，逐组可复算）**。取整规则：多格组 = ⌊格数 × 概率⌋ 向下取整；单格 = 直接 0/1 赋档（保守档要求更强证据，单格保守档一律 0）。A∩B 无重叠计入：email-inbox-delete（NR）只在 A1 计，B 组显式排除。
+
+| 格组 | 格数 | 保守/上界概率 | 保守 | 上界 | 概率来源 |
+|---|---:|---|---:|---:|---|
+| A1 email 家族（md 表覆盖） | 10 | 0.3 / 0.4 | 3 | 4 | 分析 Top-10 #1："~0.4 **过**"；"~0.7 能正确交互"是交互率非通过率，**不入通过算术**（MF-2） |
+| A2 find-greatest | 1 | — / 0.5 | 0 | 1 | 单格赋档：review-r4 V3 实测 6 卡带 md 入表，机制单一但无通过先例 |
+| B1 O-H 完成幻觉（翻正） | 24 | 0.15 / 0.2 | 3 | 4 | 分析 Top-10 #2 翻正 ~0.2（24×0.2=4.8 为算术上界，MF-2 修正原"+8"）；保守 = 法定值 ×0.75 折扣 |
+| B2 NR 非 email（social-media、text-editor） | 2 | 0.5 / 0.5 | 1 | 1 | ⌊2×0.5⌋；NR"自报完成即停"与 B 病根直接对症；delete 归 A1 不重复计 |
+| **合计增量** | **37 触达**（delete 归 A1，无重复计） | | **7** | **10** | |
+
 | 口径 | 保守 | 上界 | 构成 |
 |---|---|---|---|
-| **r4 headline 干净口径**（125 分母，E 类预期 invalid=0） | **67/125 = 53.6%** | **76/125 = 60.8%** | r3 基线 59 + A +4~8（email 10 格 0.35~0.5 + find-greatest）+ B +4~9（O-H 翻正 + NR，email-inbox-delete 与 A 去重）；E +0（完整性收益） |
-| 50% 主张线 | 需 ≥63 格 | — | 保守档 67 留 4 格缓冲；单 seed 噪声带 ±10 格（±8%）须随表披露 |
+| **r4 headline 干净口径**（125 分母，E 类预期 invalid=0） | **66/125 = 52.8%** | **69/125 = 55.2%** | r3 基线 59 + 上表增量 7~10；E +0（完整性收益，不计格） |
+| 50% 主张线 | 需 ≥63 格 | — | 保守档 66 留 **3 格缓冲**；单 seed 噪声带 ±10 格（±8%）须随表披露 |
 
 诚实备注：①主张押在 A+B 的证据强度上——email 家族是全网格唯一"两轮 0/20、死法唯一、非方差"的稳定缺口，幻觉/NR 是"r2 提出未接、r3 仍 57%"的病根项；②若 headline 落在 60–62 格（48.0–49.6%），以 M3 归因 + M4 门控决策（majority-of-3 把归因噪声压到 ±3）补证，**绝不改判分、不上 best-of**；③A 是感知层变更，若冒烟显示 md 表爆炸/长尾失控（cap 频繁触发、DOM 读取延迟显著上升），headline 前回退该 flag 并更新 plan 附录。
 
