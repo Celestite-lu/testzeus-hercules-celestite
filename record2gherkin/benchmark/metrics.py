@@ -49,6 +49,9 @@ ROW_KEYS: tuple[str, ...] = (
     "model",
     # 安全扫描注解（spec §7.6）；不参与任何指标分母，只做逐行披露。
     "task_url_navigations",
+    # spec-r4 §3.2 (E3): this attempt's rewards.jsonl record count — the zero-event disclosure
+    # (``zero_reward_cells``) reads it.  Disclosure only, never a metric denominator input.
+    "reward_records",
     "flagged",
     "invalid_reason",
     # spec-r2 §1.2 (C1b/C1d) audit keys: which attempt produced the row and whether the 402/network
@@ -128,6 +131,11 @@ class Summary:
     clean: MetricValue | None = None
     invalid_cells: list[dict[str, Any]] = field(default_factory=list)
     invalid_cells_total: int = 0
+    # spec-r4 §3.3 (E4): the zero-reward-event disclosure (analysis-r3 §4.5) — latest rows whose
+    # scan counted zero rewards.jsonl records, i.e. cells without any page verdict.  Disclosed
+    # only; it never enters ``overall``/``clean``.
+    zero_reward_cells: list[dict[str, Any]] = field(default_factory=list)
+    zero_reward_cells_total: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -148,6 +156,8 @@ class Summary:
             "clean": self.clean.as_dict() if self.clean else None,
             "invalid_cells": self.invalid_cells,
             "invalid_cells_total": self.invalid_cells_total,
+            "zero_reward_cells": self.zero_reward_cells,
+            "zero_reward_cells_total": self.zero_reward_cells_total,
         }
 
 
@@ -228,6 +238,8 @@ def _rate(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Seque
 #: spec-r3 §5.4 (E4): ``invalid_cells`` is capped at this many entries; the full count stays in
 #: ``invalid_cells_total`` so the truncation is auditable.
 INVALID_CELLS_LIMIT = 50
+#: spec-r4 §3.3 (E4): same cap style for the zero-reward-event disclosure.
+ZERO_REWARD_CELLS_LIMIT = 50
 
 
 def clean_rate(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Sequence[Mapping[str, Any]]) -> MetricValue:
@@ -265,6 +277,21 @@ def invalid_cell_list(cells: Mapping[tuple[str, int | str], Mapping[str, Any]]) 
         entries.append({"task_id": str(row.get("task_id")), "seed": seed, "invalid_reason": reason})
     entries.sort(key=lambda entry: (entry["task_id"], str(entry["seed"])))
     return entries[:INVALID_CELLS_LIMIT], len(entries)
+
+
+def zero_reward_cell_list(cells: Mapping[tuple[str, int | str], Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """``zero_reward_cells`` disclosure (spec-r4 §3.3/E4): one ``{"task_id", "seed", "status"}``
+    entry per latest row whose scan counted ``reward_records == 0`` (no page verdict at all,
+    analysis-r3 §4.5), sorted by task_id, capped at :data:`ZERO_REWARD_CELLS_LIMIT`; returns
+    ``(entries, total)``.  Rows without the key (r2/r3-era rows) count as unknown, not zero."""
+    entries: list[dict[str, Any]] = []
+    for (_task_id, seed), row in cells.items():
+        records = row.get("reward_records")
+        if not isinstance(records, int) or isinstance(records, bool) or records != 0:
+            continue
+        entries.append({"task_id": str(row.get("task_id")), "seed": seed, "status": row.get("status")})
+    entries.sort(key=lambda entry: (entry["task_id"], str(entry["seed"])))
+    return entries[:ZERO_REWARD_CELLS_LIMIT], len(entries)
 
 
 def family_rates(cells: Mapping[tuple[str, int | str], Mapping[str, Any]], tasks: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -384,6 +411,7 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, tasks: Sequence[Mapping[str,
     junit_value, junit_unavailable = junit_rate(cells, task_table)
     found = disagreements(rows)
     invalid_entries, invalid_total = invalid_cell_list(cells)
+    zero_entries, zero_total = zero_reward_cell_list(cells)
     return Summary(
         exp_id=exp_id,
         rows=len(rows),
@@ -402,6 +430,8 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, tasks: Sequence[Mapping[str,
         clean=clean_rate(cells, task_table),
         invalid_cells=invalid_entries,
         invalid_cells_total=invalid_total,
+        zero_reward_cells=zero_entries,
+        zero_reward_cells_total=zero_total,
     )
 
 

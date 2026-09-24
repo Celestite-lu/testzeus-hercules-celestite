@@ -264,6 +264,8 @@ async def __fetch_dom_info(page: Page, accessibility_tree: dict[str, Any], only_
         "aria-controls",
         "aria-describedby",
     ]
+    if get_global_conf().get_md_interactive_extended().strip().lower() == "true":
+        attributes.append("class")  # r4-A：图标无文本，class 是 star/trash 等的唯一语义锚
     backup_attributes = []  # if the attributes are not found, then try to get these attributes
     tags_to_ignore = [
         "head",

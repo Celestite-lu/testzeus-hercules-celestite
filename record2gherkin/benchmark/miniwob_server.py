@@ -22,6 +22,12 @@ and the episode budget semantics never change:
 * ``--terminal-cue`` (C2) — appends ``TERMINAL_CUE_PATCH``: a neutral, constant ``EPISODE ENDED``
   marker appears in the page corner when the episode ends.  No reward value, no success/failure word,
   no POST — the page reward stays the only judging authority.
+* ``--offseed-beacon`` (r4 E1/E2, spec-r4 §3.1) — appends ``INTEGRITY_BEACON_PATCH``: integrity
+  beacons, harness-only and judgement-neutral.  A page load without ``r2g_seed`` in the query POSTs
+  ``/__r2g_offseed`` (off-seed evidence, 安全复审 M2); a seeded load POSTs ``/__r2g_epstart`` with the
+  seed (episode-started evidence, distinguishing "never started" from "started, no reward").  Both
+  land as append-only JSONL lines next to the rewards file; neither touches the episode or the
+  reward chain.
 
 Endpoints (spec §3.3)::
 
@@ -29,6 +35,8 @@ Endpoints (spec §3.3)::
     GET  /core/core.js               vendored bytes + both patches
     POST /__r2g_reward               terminal record -> memory (last-wins) + one JSONL line
     GET  /__r2g_reward/latest?...    latest record for (task, seed), 404 ``{"error": "no_reward"}``
+    POST /__r2g_offseed              r4: off-seed load -> one ``offseed.jsonl`` line (always 204)
+    POST /__r2g_epstart              r4: seeded load -> one ``epstart.jsonl`` line (always 204)
     GET  /healthz                    ``{"served_root", "patched", "rewards"}``
 
 CLI::
@@ -57,6 +65,11 @@ REWARD_PATH = "/__r2g_reward"
 REWARD_LATEST_PATH = "/__r2g_reward/latest"
 HEALTH_PATH = "/healthz"
 CORE_JS_SUFFIX = "/core/core.js"
+#: spec-r4 §3.1 (E1/E2): the two integrity-beacon endpoints and their JSONL files.
+OFFSEED_PATH = "/__r2g_offseed"
+EPSTART_PATH = "/__r2g_epstart"
+OFFSEED_FILENAME = "offseed.jsonl"
+EPSTART_FILENAME = "epstart.jsonl"
 
 PATCH_START_MARKER = "__R2G_PATCH_START__"
 PATCH_END_MARKER = "__R2G_PATCH_END__"
@@ -213,6 +226,19 @@ REWARD_HOOK_PATCH = """/* __R2G_REWARD_HOOK__ */
   };
 })();"""
 
+#: spec-r4 §3.1 (E1/E2) integrity beacons, verbatim.  Runs once at page-load time (before the
+#: episode logic): a load whose query carries no ``r2g_seed`` POSTs ``/__r2g_offseed`` (off-seed
+#: navigation evidence); a seeded load POSTs ``/__r2g_epstart`` with the seed.  Neither beacon
+#: touches the episode, the reward hook or any judging path — append-only server-side records only.
+INTEGRITY_BEACON_PATCH = """/* r4 integrity beacons (harness-only): off-seed detection + seeded-load beacon */
+(function () {
+  var q = function (n) { var m = new RegExp("[?&]" + n + "=([^&#]*)").exec(location.search); return m ? m[1] : null; };
+  var beep = function (ep, extra) {
+    try { fetch("/__r2g_" + ep, { method: "POST", body: JSON.stringify(Object.assign({ path: location.pathname }, extra || {})) }); } catch (e) {}
+  };
+  if (!q("r2g_seed")) { beep("offseed"); } else { beep("epstart", { seed: q("r2g_seed") }); }
+})();"""
+
 CONTENT_TYPES: Mapping[str, str] = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript",
@@ -235,23 +261,52 @@ class PortInUseError(RuntimeError):
     """Raised when the configured port cannot be bound (spec §3.1: never auto-switch ports)."""
 
 
-def patch_core_js(source: bytes, *, terminal_cue: bool = False, single_start: bool = False) -> bytes:
-    """Vendored ``core.js`` bytes + the patches as a pure append (spec §3.2, spec-r2 §4.1).
+def patch_core_js(source: bytes, *, terminal_cue: bool = False, single_start: bool = False, offseed_beacon: bool = False) -> bytes:
+    """Vendored ``core.js`` bytes + the patches as a pure append (spec §3.2, spec-r2 §4.1, spec-r4 §3.1).
 
     Patch order: vendored source → 补丁 A (``AUTO_START_PATCH_SINGLE`` when ``single_start`` else the
     r1 ``AUTO_START_PATCH``, byte-identical by default) → 补丁 B (reward hook) → ``TERMINAL_CUE_PATCH``
-    (only when ``terminal_cue``).  Both flags default to off, which reproduces the r1 bytes exactly.
+    (only when ``terminal_cue``) → ``INTEGRITY_BEACON_PATCH`` (only when ``offseed_beacon``).
+    All flags default to off, which reproduces the r1/r3 bytes exactly (T8a golden).
     """
     auto_start = AUTO_START_PATCH_SINGLE if single_start else AUTO_START_PATCH
     patches = [auto_start, REWARD_HOOK_PATCH]
     if terminal_cue:
         patches.append(TERMINAL_CUE_PATCH)
+    if offseed_beacon:
+        patches.append(INTEGRITY_BEACON_PATCH)
     appended = "\n" + "\n".join(patches) + "\n"
     return source + appended.encode("utf-8")
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class BeaconLog:
+    """Append-only JSONL writer for the r4 integrity beacons (spec-r4 §3.1).
+
+    One file per beacon kind (``offseed.jsonl`` / ``epstart.jsonl``) inside the exp root (the
+    rewards file's directory), flushed per line like the rewards file, created on first write.
+    ``directory=None`` (memory-only server, no ``--rewards-file``) keeps the endpoints answering
+    204 without persisting — the benchmark orchestrator always passes a rewards file.
+    """
+
+    def __init__(self, directory: str | Path | None) -> None:
+        self.directory = Path(directory) if directory is not None else None
+        self._lock = threading.Lock()
+
+    def append(self, filename: str, record: Mapping[str, Any]) -> dict[str, Any]:
+        stored = dict(record)
+        if self.directory is None:
+            return stored
+        line = json.dumps(stored, ensure_ascii=False)
+        with self._lock:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            with (self.directory / filename).open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+                handle.flush()
+        return stored
 
 
 class RewardCollector:
@@ -327,7 +382,11 @@ def content_type_for(path: Path) -> str:
     return CONTENT_TYPES.get(path.suffix.lower(), DEFAULT_CONTENT_TYPE)
 
 
-def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool = False, single_start: bool = False) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    root: Path, collector: RewardCollector, *, terminal_cue: bool = False, single_start: bool = False, offseed_beacon: bool = False, beacons: BeaconLog | None = None
+) -> type[BaseHTTPRequestHandler]:
+    beacon_log = beacons if beacons is not None else BeaconLog(None)
+
     class MiniWobHandler(BaseHTTPRequestHandler):
         server_version = "MiniWobPatchServer/1.0"
         protocol_version = "HTTP/1.1"
@@ -348,6 +407,12 @@ def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool 
         def _send_json(self, status: int, payload: Mapping[str, Any]) -> None:
             self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+        def _send_no_content(self) -> None:
+            """204 without a body (RFC 7230: no Content-Length/Content-Type on 204)."""
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
         def _send_file(self, path: Path) -> None:
             try:
                 body = path.read_bytes()
@@ -355,7 +420,7 @@ def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool 
                 self._send_json(404, {"error": "not_found", "path": self.path})
                 return
             if self.path.split("?", 1)[0].endswith(CORE_JS_SUFFIX):
-                body = patch_core_js(body, terminal_cue=terminal_cue, single_start=single_start)
+                body = patch_core_js(body, terminal_cue=terminal_cue, single_start=single_start, offseed_beacon=offseed_beacon)
                 self._send(200, body, "text/javascript")
                 return
             self._send(200, body, content_type_for(path))
@@ -401,6 +466,9 @@ def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool 
             request_path, _, _ = self.path.partition("?")
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
+            if request_path in (OFFSEED_PATH, EPSTART_PATH):
+                self._serve_beacon(OFFSEED_FILENAME if request_path == OFFSEED_PATH else EPSTART_FILENAME, raw)
+                return
             if request_path != REWARD_PATH:
                 self._send_json(404, {"error": "not_found", "path": request_path})
                 return
@@ -414,6 +482,22 @@ def _make_handler(root: Path, collector: RewardCollector, *, terminal_cue: bool 
                 return
             record = collector.record(payload)
             self._send_json(200, {"ok": True, "received_at": record["received_at"]})
+
+        def _serve_beacon(self, filename: str, raw: bytes) -> None:
+            """spec-r4 §3.1: best-effort JSON body (failure = empty strings), always 204."""
+            try:
+                payload = json.loads(raw.decode("utf-8") or "{}")
+            except (UnicodeDecodeError, ValueError):
+                payload = None
+            if not isinstance(payload, Mapping):
+                payload = {}
+            path = payload.get("path")
+            record: dict[str, Any] = {"ts": _now(), "path": path if isinstance(path, str) else ""}
+            if filename == EPSTART_FILENAME:
+                seed = payload.get("seed")
+                record["seed"] = seed if isinstance(seed, str) else ("" if seed is None else str(seed))
+            beacon_log.append(filename, record)
+            self._send_no_content()
 
     return MiniWobHandler
 
@@ -430,13 +514,17 @@ class MiniWobServer:
         rewards_file: str | Path | None = None,
         terminal_cue: bool = False,
         single_start: bool = False,
+        offseed_beacon: bool = False,
     ) -> None:
         self.root = Path(root).resolve()
         self.host = host
         self._requested_port = port
         self.terminal_cue = bool(terminal_cue)
         self.single_start = bool(single_start)
+        self.offseed_beacon = bool(offseed_beacon)
         self.collector = RewardCollector(rewards_file)
+        # spec-r4 §3.1: beacon JSONL files live in the exp root (the rewards file's directory).
+        self.beacons = BeaconLog(Path(rewards_file).parent if rewards_file is not None else None)
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -449,7 +537,10 @@ class MiniWobServer:
         if not self.root.is_dir():
             raise FileNotFoundError(f"serving root does not exist: {self.root}")
         try:
-            self._httpd = ThreadingHTTPServer((self.host, self._requested_port), _make_handler(self.root, self.collector, terminal_cue=self.terminal_cue, single_start=self.single_start))
+            self._httpd = ThreadingHTTPServer(
+                (self.host, self._requested_port),
+                _make_handler(self.root, self.collector, terminal_cue=self.terminal_cue, single_start=self.single_start, offseed_beacon=self.offseed_beacon, beacons=self.beacons),
+            )
         except OSError as exc:
             raise PortInUseError(f"cannot bind {self.host}:{self._requested_port} ({exc}); free the port or pick another one explicitly") from exc
         self._httpd.daemon_threads = True
@@ -502,9 +593,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rewards-file", default=None, help="JSONL destination for terminal records (memory-only when omitted)")
     parser.add_argument("--terminal-cue", action="store_true", help="spec-r2 §4.3 (C2): append the neutral EPISODE ENDED terminal-cue patch")
     parser.add_argument("--single-start", action="store_true", help="spec-r2 §4.2 (C3): auto-start at most once per tab (sessionStorage gate)")
+    parser.add_argument("--offseed-beacon", action="store_true", help="spec-r4 §3.1 (E1/E2): append the off-seed/epstart integrity beacons (judgement-neutral)")
     args = parser.parse_args(argv)
 
-    server = MiniWobServer(args.root, host=args.host, port=args.port, rewards_file=args.rewards_file, terminal_cue=args.terminal_cue, single_start=args.single_start)
+    server = MiniWobServer(
+        args.root, host=args.host, port=args.port, rewards_file=args.rewards_file, terminal_cue=args.terminal_cue, single_start=args.single_start, offseed_beacon=args.offseed_beacon
+    )
     try:
         server.start()
     except (PortInUseError, FileNotFoundError) as exc:

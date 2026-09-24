@@ -582,6 +582,10 @@ class BaseConfigManager:
             "SANDBOX_DISABLED",
             # spec-r3 §6 (R3-6/F): planner assertion-discipline prompt preamble
             "PLANNER_ASSERT_DISCIPLINE",
+            # spec-r4 §1.1 (R4-A): extended interactive-element table (default off = r3 parity)
+            "MD_INTERACTIVE_EXTENDED",
+            # spec-r4 §2.1 (R4-B): forced pre-termination verification round (default off = r3 parity)
+            "VERIFY_BEFORE_DONE",
         ]
 
         for key in relevant_keys:
@@ -737,6 +741,8 @@ class BaseConfigManager:
         self._config.setdefault("SANDBOX_CUSTOM_INJECTIONS", "{}")  # No default custom injections
         self._config.setdefault("SANDBOX_DISABLED", "false")  # spec-r3 (E5): sandbox enabled by default
         self._config.setdefault("PLANNER_ASSERT_DISCIPLINE", "false")  # spec-r3 (F): off by default
+        self._config.setdefault("MD_INTERACTIVE_EXTENDED", "false")  # spec-r4 (R4-A): off = r3 parity
+        self._config.setdefault("VERIFY_BEFORE_DONE", "false")  # spec-r4 (R4-B): off = r3 parity
 
         # LLM Model Configuration defaults
         # --------------------------------------------------
@@ -1221,6 +1227,14 @@ class BaseConfigManager:
             The raw SANDBOX_DISABLED config value ("false" by default).
         """
         return self._config.get("SANDBOX_DISABLED", "false")
+
+    def get_md_interactive_extended(self) -> str:
+        """Raw MD_INTERACTIVE_EXTENDED config value ("false" by default). Off = r3 parity."""
+        return self._config.get("MD_INTERACTIVE_EXTENDED", "false")
+
+    def get_verify_before_done(self) -> str:
+        """Raw VERIFY_BEFORE_DONE config value ("false" by default). Off = r3 parity."""
+        return self._config.get("VERIFY_BEFORE_DONE", "false")
 
 
 # ------------------------------------------------------------------------------

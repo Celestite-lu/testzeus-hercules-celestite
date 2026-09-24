@@ -48,6 +48,16 @@ from testzeus_hercules.utils.ui_messagetype import MessageType
 
 nest_asyncio.apply()
 
+#: spec-r4 §2.2 (R4-B, ``--verify-before-done``): the fixed pre-termination verification step.
+#: It only reads the page's *visible* state (get_page_text / get_interactive_elements) — reading
+#: any reward global (``WOB_REWARD_GLOBAL`` / ``WOB_RAW_REWARD_GLOBAL``) through any tool
+#: (including execute_js) is forbidden; the official verdict stays page/server-authoritative.
+_VERIFY_STEP = (
+    "VERIFICATION REQUIRED BEFORE TERMINATION: call get_page_text and get_interactive_elements, "
+    "then report whether the task goal is visibly satisfied on the current page (note any "
+    "'EPISODE ENDED' terminal cue). Do not perform any other action."
+)
+
 
 class AgentState(TypedDict, total=False):
     # Full planner ↔ helper conversation
@@ -78,6 +88,9 @@ class AgentState(TypedDict, total=False):
     completed_step_signatures: list[str]
     last_helper_response: str
     current_url: str
+
+    # spec-r4 §2.2 (R4-B): forced pre-termination verification round counter (hard cap = 1)
+    verify_rounds: int
 
 
 class SimpleHercules:
@@ -953,8 +966,26 @@ class SimpleHercules:
             ],
         }
 
-    def _route_after_planner(self, state: AgentState) -> Literal["executor", "assertion", "end"]:
+    def _verify_gate_node(self, state: AgentState) -> dict[str, Any]:
+        """spec-r4 §2.2 (R4-B): force one pre-termination verification round via the executor path."""
+        rounds = int(state.get("verify_rounds", 0) or 0) + 1
+        logger.warning("[R2G_VERIFY] forced pre-terminate verification round (verify_rounds=%d)", rounds)
+        return {
+            "next_step": _VERIFY_STEP,
+            "target_helper": "browser",
+            "terminate": "no",
+            "is_assert": False,
+            "verify_rounds": rounds,
+        }
+
+    def _route_after_planner(self, state: AgentState) -> Literal["executor", "assertion", "verify", "end"]:
         terminate = state.get("terminate", "no")
+        # spec-r4 §2.2 (R4-B, --verify-before-done): a self-declared pass gets exactly one forced
+        # verification round before END (hard cap: verify_rounds >= 1 always goes straight through,
+        # so there is no loop face).  is_passed=false terminations are never verified.
+        verify_flag = get_global_conf().get_verify_before_done().strip().lower() == "true"
+        if verify_flag and terminate == "yes" and bool(state.get("is_passed", False)) and int(state.get("verify_rounds", 0) or 0) < 1:
+            return "verify"
         if terminate == "yes":
             return "end"
         is_assert = bool(state.get("is_assert", False))
@@ -972,17 +1003,19 @@ class SimpleHercules:
         graph.add_node("planner", self._planner_node)
         graph.add_node("executor", self._executor_node)
         graph.add_node("assertion", self._assertion_node)
+        graph.add_node("verify", self._verify_gate_node)
         graph.set_entry_point("planner")
         graph.add_conditional_edges(
             "planner",
             self._route_after_planner,
-            {"executor": "executor", "assertion": "assertion", "end": END},
+            {"executor": "executor", "assertion": "assertion", "verify": "verify", "end": END},
         )
         graph.add_conditional_edges(
             "executor",
             self._route_after_executor,
             {"planner": "planner", "assertion": "assertion"},
         )
+        graph.add_edge("verify", "executor")
         graph.add_edge("assertion", END)
         return graph.compile()
 
@@ -1039,6 +1072,7 @@ class SimpleHercules:
                 "completed_step_signatures": [],
                 "last_helper_response": "",
                 "current_url": current_url or "",
+                "verify_rounds": 0,
             }
             final_state = await self._graph.ainvoke(initial, config={"recursion_limit": 2000})
 

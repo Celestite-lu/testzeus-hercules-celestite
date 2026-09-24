@@ -912,6 +912,6 @@ def test_t12_d_arm_dry_run_480s(tmp_path: Path, tasks: list[dict[str, Any]], cap
     assert R2_BUDGET_CAP == 144
 
     view = Orchestrator("miniwob-r3-d480", stage="full", tasks=tasks, dry_run=True, episode_ms=480000, timeout_s=900)
-    assert view.flags["nav_max_tokens"] == 0  # D 臂 = headline flags + 计时参数，此处仅验证计时面
+    assert "nav_max_tokens" not in view.flags  # D 臂 = headline flags + 计时参数（r4 起：未传参键缺省）；此处仅验证计时面
     assert view.episode_ms == 480000 and view.timeout_s == 900
     assert orchestrator.hercules_budget("full")["total"] == 130
