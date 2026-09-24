@@ -1,6 +1,7 @@
 # 面试就绪度审计 — 「录制即用例」（秋招视角）
 
 > 审计代理：GLM（资深 AI 测试/Agent 方向面试官视角）。日期：2026-09-24。
+> **更正注（2026-09-24，红队复审后追加）**：①本报告 §1-G6、§2"对比拷问"行、§3-4、§5-A2、§5-17 中的 "Agent-E 81.6% / 差 20pp" 表述写于锚点更正之前，已废弃——81.6% 实为 HxAgent（arXiv 2608.15491）数字且四重口径不可比，Agent-E 从未发表 MiniWoB++ 数字；正确口径见 baselines.md 更正行与 qa-bank 卡 4 / Q32。②G7 所述 README 数字过时已修复，492 的真实构成为 recorder 21 / distiller 68 / evaluation 77 / attributor 81 / cli 54 / benchmark 191（--collect-only 实测），非本报告估计的 "+200"。
 > 方法：只读分析 + 实测复验（`uv run pytest tests/record2gherkin -q` → **492 passed in 94.45s**；`git ls-tree origin/main` 核验远端可见性）。未改代码、未做 git 操作。
 > 输入：PLAN.md §2/§6、round1-4 报告、experiment-report、final-analysis、record2gherkin/README、git 状态。
 

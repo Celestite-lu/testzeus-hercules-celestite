@@ -16,7 +16,8 @@ uv run python -m record2gherkin generate events.json --out test.feature [--test-
 # 3. 执行：feature → Hercules 子进程（LLM key 从 LLM-Key.txt 读取，仅经 env 注入）
 uv run python -m record2gherkin run test.feature --out-dir run1 [--dry-run] [--key-file LLM-Key.txt]
 
-# 4. 归因：失败运行 → 规则签名优先 + 证据引用回查的归因报告（绝不瞎编）
+# 4. 归因：失败运行 → 规则签名优先 + 证据引用回查的归因报告
+#    （LLM 摘要强制引用证据、程序回查，查无此证强制降级"无法定位"）
 uv run python -m record2gherkin analyze run1/opt [--llm]
 ```
 
@@ -26,9 +27,10 @@ uv run python -m record2gherkin analyze run1/opt [--llm]
 |---|---|---|
 | `recorder/` | 注入式 JS 事件录制器（bookmarklet，零依赖单文件） | 21 例 |
 | `distiller/` | 确定性三层蒸馏：规则模板（零模型）→ 可选 LLM 润色 → 事实回查 | 68 例 |
-| `evaluation/` | demo 应用 / 变异引擎 / 子进程执行器 / 指标 | 68 例 |
+| `evaluation/` | demo 应用 / 变异引擎 / 子进程执行器 / 指标 | 77 例 |
 | `attributor/` | 13 条错误签名 + 五档分类 + 证据定位符回查 | 81 例 |
 | `cli.py` | 四命令编排 | 54 例 |
+| `benchmark/` | MiniWoB++ harness（判分/作弊扫描/seed 派生/配速熔断） | 191 例 |
 
 设计文档与审查记录：`dev_docs/`（每模块 plan/spec/review/test-report 全固化）。
 

@@ -1,6 +1,6 @@
 # STATUS — 总进度看板
 
-> 仅总编排代理维护。更新时间：2026-09-22（r1 基准定局 43.2%，进入 r2 分析-改进循环）
+> 仅总编排代理维护。更新时间：2026-09-24（r4 冻结 61.6%，进入面试材料阶段）
 
 ## 阶段状态
 
@@ -14,10 +14,10 @@
 | 5 | 归因器 | ✅ | feat/attributor `742a442`；81 例；真实失败样本（F5/M4）验证诚实降级 |
 | 6 | CLI | ✅ | feat/cli `d3aefbb`；54 例；四命令离线演示 + **真实 LLM 全链路验收通过**（F1 真实执行 passed，62s/7.3 万 token） |
 | 7.6 | r2 改进包 | ✅ | feat/benchmark-r2 `2ac5cd3`（harness+引擎双提交，117/409 passed，回放锁定 +5）；**r2 实验决定改用 GLM**（coding plan，glm-5.3-flash；deepseek 余额尽）——provider 补丁与引擎验证双代理并行中 |
-| 7.5 | MiniWoB++ benchmark | 🔄 | 模块已合并 `82f73dc`（68 例，全局 360）；**r1 43.2% → r2 官方 46.4%（+4）/干净口径 47.8%（触及 A 档下沿）**；r2 安全 YELLOW（W2 成真 10 格无效化处理）；报告 `round2-report.md`；**r4 突破：官方=clean 61.6%（77/125，零无效格）——越出 A 档上沿**；md 终表扩展+verify 双主梁 +18 格；超时 21→9；email 0/20→4/10；四轮线 43.2→46.4→47.2→61.6；复审进行中 |
+| 7.5 | MiniWoB++ benchmark | 🔄 | 模块已合并 `82f73dc`（68 例，全局 360）；**r1 43.2% → r2 官方 46.4%（+4）/干净口径 47.8%（触及 A 档下沿）**；r2 安全 YELLOW（W2 成真 10 格无效化处理）；报告 `round2-report.md`；**r4 突破：官方=clean 61.6%（77/125，零无效格）——越出 A 档上沿**；md 终表扩展主梁 +17 格（逐格实证）+方差带 +7 格；超时 21→9；email 0/20→4/10；四轮线 43.2→46.4→47.2→61.6；r4 复审完成（超额归因逐格实证） |
 | 7 | 终审分析 | ✅ | `dev_docs/reports/final-analysis.md`：**COMPLETE-WITH-NOTES**（数字独立复核属实；演示规避话术与简历口径校准见报告 §4） |
 
-**全局测试基线：292 passed**（recorder 21 + distiller 68 + evaluation 68 + attributor 81 + cli 54）。
+**全局测试基线：492 passed**（recorder 21 + distiller 68 + evaluation 77 + attributor 81 + cli 54 + benchmark 191，2026-09-24 --collect-only 逐模块实测）。
 
 ## 决策日志（全量）
 

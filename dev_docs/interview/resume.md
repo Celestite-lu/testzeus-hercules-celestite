@@ -12,7 +12,7 @@
 
 ### 1.1 AI Agent 开发方向（突出：多 agent 编排 + 四轮迭代方法论 + 评测素养）
 
-> **录制即用例：AI Web 测试工具链 + MiniWoB++ 全量基准四轮迭代（43.2%→61.6%）**（独立开发）
+> **录制即用例：AI Web 测试工具链 + MiniWoB++ 全量基准四轮迭代（43.2%→61.6%）**（独立开发，基于开源执行内核 Hercules 二次开发）
 
 - 设计零样本文本-DOM 观察口径，跑通 MiniWoB++（browsergym registry）全量 125 任务类，四轮迭代 43.2%→46.4%→47.2%→61.6%，越出同 regime 公开可比带（零样本文本-DOM GPT-4 级 47-60%）上沿
 - 建立逐格归因驱动的迭代方法论：每轮对 125 格逐格归因，据此定位"可见但不可寻址"元素盲区，扩展 md 终表过滤器后单轮实证 +17/24 通过格，超时格 21→9、无效格连续两轮清零
@@ -23,22 +23,22 @@
 
 ### 1.2 测试开发方向（突出：确定性蒸馏 + 防作弊评测纪律 + 归因闭环）
 
-> **录制转自然语言用例的 AI E2E 测试工具：确定性规则蒸馏 + 语义化执行 + 失败自动归因**（独立开发，492 条测试）
+> **录制转自然语言用例的 AI E2E 测试工具：确定性规则蒸馏 + 语义化执行 + 失败自动归因**（独立开发，基于开源执行内核二开，492 条测试）
 
 - 实现确定性三层蒸馏管线：规则模板骨架（零 LLM）→ 可选 LLM 润色 → 事实回查校验（字面值必须能在录制事件流中找到，不过即回退纯模板），骨架正确性对模型能力零依赖
 - 设计受控 UI 变异实验（6 流程 × 5 变异 × 2 方法 = 60 格）：标识符随机化变异下生成用例存活 6/6、selector 式基线 0/6，主指标 1.00 vs 0.667；文案改写变异 5/6 如实量化语义自愈的概率性边界
 - 实现失败归因器：13 条错误签名规则优先定类（LLM 不参与）+ LLM 摘要强制引用证据（日志行/截图/工具原文）、程序回查引用存在性、查无此证强制降级"无法定位"——真实失败格完成归因闭环验证
 - 建立评测防作弊纪律：页面原生 reward 唯一权威判分、五类作弊扫描、每轮实验前/后双安全审查；成功路径绕过扫描事件按预登记契约压分 10 格（宁可掉分不洗分）
-- 编写 492 条 pytest（recorder 21 / distiller 68 / evaluation 68 / attributor 81 / cli 54 + benchmark 200），并能定位自身 fixture 隔离缺陷（session 级 playwright 实例冲突、特定子集乱序误红 6 条）
+- 编写 492 条 pytest（recorder 21 / distiller 68 / evaluation 77 / attributor 81 / cli 54 / benchmark 191，2026-09-24 --collect-only 实测），并能定位自身 fixture 隔离缺陷（session 级 playwright 实例冲突、特定子集乱序误红 6 条）
 - 量化执行成本：30 次真实 LLM 执行共 411 万 token（均值 13.7 万/次，单场景 7.3 万-42 万）；MiniWoB++ 全量 125 任务单轮 12.2M token 内完成
 
 ### 1.3 前端 + AI 方向（突出：前端测试痛点的诚实解法——能讲清哪 6/6、哪 5/6）
 
-> **为前端团队打造「录制即用例」AI E2E 测试工具：点一遍页面即得用例、UI 改版不挂、失败自动定责**（独立开发）
+> **为前端团队打造「录制即用例」AI E2E 测试工具：点一遍页面即得用例、UI 改版不挂、失败自动定责**（独立开发，基于开源执行内核二开）
 
 - 实现注入式 JS 事件录制器（bookmarklet 零安装）：手动操作页面即捕获点击/输入/导航事件流，确定性蒸馏成 Gherkin 用例，生成用例首轮真实执行通过率 6/6
 - 受控变异实验（6 流程 × 5 变异 × 2 方法）实证 selector 腐烂痛点：id/class/testid 全部随机化（模拟前端改版）下，语义执行用例存活 6/6，selector 式 Playwright 脚本 0/6
-- 语义执行每次现场理解 DOM（属性蒸馏接近 accessibility-tree），无持久 selector；失败归因报告自动定责四类（产品 bug/用例过时/环境/agent 限制，13 条签名规则优先）
+- 语义执行每次现场理解 DOM（属性蒸馏接近 accessibility-tree），无持久 selector；失败归因报告五档定类（产品 bug/用例过时/环境/agent 能力上限/无法定位，13 条签名规则优先）
 - 基于 LangGraph 多 agent 执行内核二次开发，跑通 MiniWoB++ 全量 125 任务类、四轮迭代 43.2%→61.6%，验证语义执行内核在 125 类页面交互上的规模化能力
 - 内建安全默认值：密码录制即掩码、LLM key 仅经子进程 env 注入、日志强制脱敏（双 key 扫描全零）
 - 如实声明边界（半解而非全解）：多页导航 v1 scope out（检测到跨文档导航干净退出不落脏数据）、跨域 iframe/closed shadow DOM/canvas 为硬盲区、文案改写自愈 5/6 属概率性
@@ -75,13 +75,13 @@
 
 ### 卡 3：492 测试口径
 
-一口气版：**`uv run pytest tests/record2gherkin -q` → 492 passed（2026-09-24 实测 94.45s）。构成：recorder 21 + distiller 68 + evaluation 68 + attributor 81 + cli 54 = 292 五模块基础 + benchmark 线 200。**被问测试质量时主动讲自己的缺陷：session 级 playwright fixture 与 CLI 的 sync 实例冲突，特定子集乱序会误红 6 条——知道根因、官方全量入口绿、修法是一行 fixture scope。
+一口气版：**`uv run pytest tests/record2gherkin -q` → 492 passed（2026-09-24 实测 94.45s）。构成：五模块 301（recorder 21 + distiller 68 + evaluation 77 + attributor 81 + cli 54）+ benchmark 191 = 492（--collect-only 逐模块实测）。**被问测试质量时主动讲自己的缺陷：session 级 playwright fixture 与 CLI 的 sync 实例冲突，特定子集乱序会误红 6 条——知道根因、官方全量入口绿、修法是一行 fixture scope。
 
 ### 卡 4："超越 Agent-E HEAD"的说法边界
 
 **三不说：**
 1. 不说"分数超过 Agent-E"——它从未发表 MiniWoB++ 数字，唯一公开数字是 WebVoyager 73.2%（GPT-4-Turbo、人工评判），与我方口径零交集
-2. 不说"距 Agent-E 差 20 个百分点"——该叙事建立在错误归属上，已废弃（round4 报告为历史原文）
+2. 不说"距 Agent-E 差 20 个百分点"——该叙事建立在错误归属上，已废弃（round4 报告原文旁已加更正标注，权威更正固化在 baselines.md）
 3. 不把 81.6% 当作任何人的 MiniWoB 通用成绩引用；若面试官主动提 81.6%，给出更正：那是 **HxAgent**（arXiv 2608.15491）的数字，且四重口径不可比（5 任务族×25 实例偏科子集 / GPT-4o 多模态 / 每族 20 训练实例+8 条 few-shot 经验注入 / 动作序列金标 Exact-Match 判分、±34.6 方差）
 
 **两说：**
@@ -127,7 +127,7 @@
 | 60 格 = 6 流程×5 变异×2 方法 | 实验矩阵与样本量限定词 | `experiment-report.md:14` |
 | 30 次执行 4,109,386 token（均值 136,980；F1 7.3 万 / F3 约 42 万） | 真实 LLM 执行成本 | `experiment-report.md:25` |
 | **492 passed（94.45s，2026-09-24 实测）** | tests/record2gherkin 全量 | `dev_docs/reports/interview-readiness-audit.md:4,111` |
-| 模块分布 21/68/68/81/54（=292）+ benchmark 线 200 = 492 | 五模块 + benchmark | `record2gherkin/README.md:26-31`、`interview-readiness-audit.md:39` |
+| 模块分布 21/68/77/81/54（=301）+ benchmark 191 = 492 | 五模块 + benchmark（2026-09-24 --collect-only 逐模块实测） | `record2gherkin/README.md` 模块表 |
 | 13 条错误签名 + 五档分类 | 归因器规则层（LLM 不参与定类） | `record2gherkin/README.md:30` |
 | MPA 干净退出 exit 2 不落脏数据 | 多页 scope out 的工程化处理 | `record2gherkin/README.md:47` |
 | F1 真实执行 passed，62s / 7.3 万 token | CLI 全链路真实验收 | `STATUS.md:15` |
