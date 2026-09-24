@@ -55,6 +55,20 @@ Flag-less harness disclosures (spec-r3 §5, judgement-neutral): file-tool call m
 cell (E2), the ``open_url`` scheme whitelist logs ``[OPEN_URL_BLOCKED]`` flagged-only (E3), the
 metrics ``clean`` calibre + ``invalid_cells`` list (E4), and the ``goal_read_error.log`` trace for
 extreme-early-crash cells (E6).
+
+r4 operations (spec-r4; A/B flag-gated default off = r3 parity, E flag-less judgement-neutral):
+
+* ``--md-extended`` (R4-A) — ``MD_INTERACTIVE_EXTENDED=true``: the engine's interactive-element
+  table additionally collects div/span/... nodes that carry a readable identity (class is the
+  star/trash anchor) and caps the table at 150 entries (``[R2G_MD_TRUNCATED]``).  Perception only —
+  the judging chain is untouched.
+* ``--verify-before-done`` (R4-B) — ``VERIFY_BEFORE_DONE=true``: the graph routes a self-declared
+  pass (``terminate=yes ∧ is_passed=true``, ``verify_rounds < 1``) through one forced verification
+  round (``[R2G_VERIFY]``) before END.  Routing only — junit/official verdicts are untouched.
+* R4-E (always on, no flag) — integrity beacons (``offseed.jsonl`` / ``epstart.jsonl``) plus three
+  flagged-only scan disclosures (``off_seed_navigation`` / ``zero_reward_events`` /
+  ``episode_never_started``) and the metrics ``zero_reward_cells`` list.  Scan output stays
+  annotation-only; ``nav_max_tokens`` only appears in ``flags`` when actually passed.
 """
 
 from __future__ import annotations
@@ -80,7 +94,9 @@ from record2gherkin.benchmark import tasks as tasks_module
 from record2gherkin.benchmark.miniwob_server import (
     DEFAULT_HOST,
     DEFAULT_PORT,
+    EPSTART_FILENAME,
     HEALTH_PATH,
+    OFFSEED_FILENAME,
     REWARD_LATEST_PATH,
 )
 from record2gherkin.evaluation import runner as runner_module
@@ -277,6 +293,7 @@ def build_result_row(
     finished_at: str,
     model: str | None = None,
     task_url_navigations: int = 0,
+    reward_records: int = 0,
     flagged: bool = False,
     invalid_reason: str | None = None,
     attempt: int = 1,
@@ -351,6 +368,9 @@ def build_result_row(
         "finished_at": finished_at,
         "model": model,
         "task_url_navigations": int(task_url_navigations),
+        # spec-r4 §3.2 (E3): this attempt's rewards.jsonl record count — the zero-event disclosure
+        # (``zero_reward_cells``) reads it; never a metric denominator input.
+        "reward_records": int(reward_records),
         "flagged": bool(flagged),
         "invalid_reason": invalid_reason,
         "attempt": int(attempt),
@@ -394,6 +414,16 @@ INVALID_REASON_FILE_TOOL = "file_tool_invoked"
 #: invalid_reason），与 r2 对 javascript: 尝试"低危披露不判无效"的处理对齐。
 OPEN_URL_BLOCKED_MARKER = "[OPEN_URL_BLOCKED]"
 
+# -- r4 完整性披露（spec-r4 §3.2, R4-E3）：flagged-only 原因常量 -----------------------------------
+#: 页面加载时 query 无 ``r2g_seed``（``offseed.jsonl`` 命中本格任务页前缀）。
+REASON_OFF_SEED = "off_seed_navigation"
+#: 本 attempt 窗口内 rewards.jsonl 记录数为 0（零 reward 事件格）。
+REASON_ZERO_REWARD = "zero_reward_events"
+#: 零事件且 epstart 窗口内零命中 = episode 从未启动（细分"从未启动"vs"已启动无奖励"）。
+REASON_EP_NEVER_STARTED = "episode_never_started"
+#: beacon 记录匹配用的任务页路径前缀（beacon POST 的是 ``location.pathname``）。
+BEACON_PATH_PREFIX = "/miniwob/{subdomain}.html"
+
 
 def _attempt_circuit_break(result: runner_module.RunResult, *, stdout_log_path: str | Path) -> bool:
     """C1b attempt-level breaker (spec-r2 §2.2): a fast infra death carrying a 402/connection marker.
@@ -421,12 +451,15 @@ class CellScan:
     ``flagged`` is the disclosure bit: it is set for the V4 renavigation count, for the V5/V6 security
     events **and** for the V3 reward anomalies.  ``invalid_reason`` is only set by the V5/V6 security
     events — a ``flagged`` row with ``invalid_reason=None`` is "disclose, don't re-judge" (spec §7.6).
+    ``flag_reasons`` (spec-r4 §3.2, R4-E3) names the r4 disclosure reasons behind a ``flagged`` bit —
+    always paired with ``invalid_reason=None`` (flagged-only, never a re-judgement).
     """
 
     task_url_navigations: int = 0
     reward_records: int = 0
     flagged: bool = False
     invalid_reason: str | None = None
+    flag_reasons: tuple[str, ...] = ()
 
     def merge(self, other: "CellScan") -> "CellScan":
         """Conjunction of two scans (each field has exactly one producer, merging is fieldwise)."""
@@ -436,6 +469,7 @@ class CellScan:
             reward_records=max(self.reward_records, other.reward_records),
             flagged=self.flagged or other.flagged,
             invalid_reason="; ".join(reasons) or None,
+            flag_reasons=tuple(dict.fromkeys((*self.flag_reasons, *other.flag_reasons))),
         )
 
 
@@ -571,6 +605,55 @@ def scan_cell_rewards(
     return CellScan(reward_records=len(records), flagged=flagged)
 
 
+# -- r4 E3 helpers（spec-r4 §3.2）：beacon 记录的窗口/路径匹配 ------------------------------------
+
+
+def _epoch_window(started_at: str | None, finished_at: str | None) -> tuple[float, float]:
+    """Attempt window as epoch seconds (open-ended on whichever bound is missing)."""
+    lo, hi = float("-inf"), float("inf")
+    for value, is_start in ((started_at, True), (finished_at, False)):
+        if not isinstance(value, str) or not value.strip():
+            continue
+        try:
+            moment = datetime.fromisoformat(value.strip())
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        if is_start:
+            lo = moment.timestamp()
+        else:
+            hi = moment.timestamp()
+    return lo, hi
+
+
+def match_records(path_prefix: str, window: tuple[float, float], records: list[dict[str, Any]]) -> bool:
+    """True when one beacon record matches this cell's task-page prefix inside the attempt window.
+
+    Same window discipline as the rewards run-window filter (:func:`_in_window`): records without a
+    parseable timestamp count on the safer side (i.e. they match).  Matching is by ``path`` prefix
+    only (spec-r4 §3.2) — each stage runs every subdomain once, so prefix + non-overlapping
+    attempt windows identify the cell.
+    """
+    lo, hi = window
+    for record in records:
+        path = record.get("path")
+        if not isinstance(path, str) or not path.startswith(path_prefix):
+            continue
+        ts = record.get("ts")
+        if not isinstance(ts, str) or not ts.strip():
+            return True
+        try:
+            moment = datetime.fromisoformat(ts.strip())
+        except ValueError:
+            return True
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        if lo <= moment.timestamp() <= hi:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------------------------
 # Server + HTTP plumbing (spec §3.1/§3.3)
 # ---------------------------------------------------------------------------------------------
@@ -619,11 +702,13 @@ def start_miniwob_server(
     host: str = DEFAULT_HOST,
     terminal_cue: bool = False,
     single_start: bool = False,
+    offseed_beacon: bool = False,
 ) -> subprocess.Popen[str]:
     """Start the patch server as a sub-process after probing the port (spec §3.1, spec-r2 §4.1).
 
-    The two r2 flags are server-level: they change which patches are appended to ``core.js`` and
-    never the URL/seed/episode semantics.
+    The r2 flags are server-level: they change which patches are appended to ``core.js`` and
+    never the URL/seed/episode semantics.  ``offseed_beacon`` (r4 E1/E2) appends the integrity
+    beacons; the orchestrator always passes ``True`` (spec-r4 §3.1, judgement-neutral).
     """
     if probe_port(host, port):
         raise BenchmarkError(f"port {host}:{port} is already in use; free it before the benchmark (the URL is an experiment parameter)")
@@ -644,6 +729,8 @@ def start_miniwob_server(
         command.append("--terminal-cue")
     if single_start:
         command.append("--single-start")
+    if offseed_beacon:
+        command.append("--offseed-beacon")
     process = subprocess.Popen(
         command,
         cwd=str(REPO_ROOT),
@@ -800,6 +887,8 @@ class Orchestrator:
         smoke_cells: Sequence[str] = (),
         provider: str | runner_module.LLMProviderConfig | None = None,
         max_cells: int | None = None,
+        md_extended: bool = False,
+        verify_before_done: bool = False,
     ) -> None:
         if stage not in tasks_module.STAGES:
             raise BenchmarkError(f"unknown stage: {stage!r} (expected one of {tasks_module.STAGES})")
@@ -858,10 +947,18 @@ class Orchestrator:
         self.assert_discipline = bool(assert_discipline)
         self.template_notes = bool(template_notes)
         self.latency_env = bool(latency_env)
+        # spec-r4 §1/§2 (R4-A/R4-B): off = r3 parity; the headline turns each on explicitly.
+        self.md_extended = bool(md_extended)
+        self.verify_before_done = bool(verify_before_done)
+        # spec-r4 §3.1 (E1/E2): harness disclosure constant — always on, no CLI, judgement-neutral.
+        self.offseed_beacon = True
         self.max_cells = int(max_cells) if max_cells else None
         self.smoke_subdomains = smoke
         #: spec-r2 §4.1: every switch lands in the manifest ``flags`` object (headline = all-on).
         #: spec-r3 §7 adds the five r3 keys (off/empty semantics on the default run).
+        #: spec-r4 §4 adds the three r4 keys; ``nav_max_tokens`` is only recorded when actually
+        #: passed (the r4 headline drops the proven no-op flag, so the key must be absent there —
+        #: a "declared but inert" r3-style distortion is exactly what spec-r4 §0.4 removes).
         self.flags: dict[str, Any] = {
             "terminal_cue": self.terminal_cue,
             "single_start": self.single_start,
@@ -871,12 +968,16 @@ class Orchestrator:
             "template_notes": self.template_notes,
             "latency_env": self.latency_env,
             "smoke_cells": list(self.smoke_subdomains),
-            "nav_max_tokens": self.nav_max_tokens,
             "planner_timeout": self.planner_timeout,
             "extra_tools_modules": list(self.extra_tools_modules),
             "disable_sandbox": self.disable_sandbox,
             "assert_discipline": self.assert_discipline,
+            "md_interactive_extended": self.md_extended,
+            "verify_before_done": self.verify_before_done,
+            "offseed_beacon": self.offseed_beacon,
         }
+        if self.nav_max_tokens > 0:
+            self.flags["nav_max_tokens"] = self.nav_max_tokens
         self.tasks = [dict(task) for task in tasks] if tasks is not None else tasks_module.load_tasks()
         self.stage_tasks = tasks_module.select_stage(stage, self.tasks)
         self.started_at = _now()
@@ -910,6 +1011,7 @@ class Orchestrator:
             host=self.host,
             terminal_cue=self.terminal_cue,
             single_start=self.single_start,
+            offseed_beacon=self.offseed_beacon,
         )
         try:
             executed = 0
@@ -967,11 +1069,13 @@ class Orchestrator:
         return write_agents_llm_config(self.exp_dir / AGENTS_LLM_CONFIG_FILENAME, config)
 
     def _child_extra_env(self) -> dict[str, str]:
-        """Merged ``extra_env`` of every enabled r2/r3 flag (spec-r2 §5.3/§6.2/§7.1, spec-r3 §7).
+        """Merged ``extra_env`` of every enabled r2/r3/r4 flag (spec-r2 §5.3/§6.2/§7.1, spec-r3 §7, spec-r4 §4).
 
         r3 injection precision (locked by T10): the five new keys appear only with their flag on;
         ``extra_tools_modules=["__all__"]`` (the ``all`` csv) injects ``LOAD_EXTRA_TOOLS`` but **no**
-        ``EXTRA_TOOLS_MODULES`` — the full r2 load.
+        ``EXTRA_TOOLS_MODULES`` — the full r2 load.  r4 (T2): ``MD_INTERACTIVE_EXTENDED`` /
+        ``VERIFY_BEFORE_DONE`` appear only with their flag on, and ``NAV_MAX_COMPLETION_TOKENS``
+        stays out unless ``--nav-max-tokens`` is actually passed (the r4 headline drops it).
         """
         extra: dict[str, str] = {}
         if self.latency_env:
@@ -988,6 +1092,10 @@ class Orchestrator:
             extra["SANDBOX_DISABLED"] = "true"
         if self.assert_discipline:
             extra["PLANNER_ASSERT_DISCIPLINE"] = "true"
+        if self.md_extended:
+            extra["MD_INTERACTIVE_EXTENDED"] = "true"
+        if self.verify_before_done:
+            extra["VERIFY_BEFORE_DONE"] = "true"
         if self.role_routing and self._routing_config_path is not None:
             extra.update(role_routing_env(self._routing_config_path, runner_module.read_api_key(self.provider.key_path)))
         return extra
@@ -1148,6 +1256,11 @@ class Orchestrator:
         if broken:
             logger.warning("orchestrator: %s attempt %s circuit-broken (fast infra death with a 402/connection marker)", cell.label, attempt_no)
         scan = self._scan_cell(cell, attempt=attempt_no, started_at=started_at, finished_at=finished_at)
+        # spec-r4 §3.2 (E3) ①: the r3-visible off-seed shape — a timeout with zero task-URL
+        # navigations — becomes an explicit flagged disclosure (安全复审 §8-2; never a re-judgement).
+        reward_raw = _reward_raw_value(reward)
+        if result.status == runner_module.STATUS_TIMEOUT and not (reward_raw is not None and reward_raw > 0) and scan.task_url_navigations == 0:
+            scan = scan.merge(CellScan(flagged=True))
         return build_result_row(
             task=self._task_for(cell.task_id),
             seed=cell.seed,
@@ -1166,6 +1279,7 @@ class Orchestrator:
             finished_at=finished_at,
             model=self.provider.model,
             task_url_navigations=scan.task_url_navigations,
+            reward_records=scan.reward_records,
             flagged=scan.flagged,
             invalid_reason=scan.invalid_reason,
             attempt=attempt_no,
@@ -1185,6 +1299,14 @@ class Orchestrator:
         reward records.  A flagged cell is disclosed on the row and logged; only the V5/V6 security
         events and the r3 file-tool call markers make it invalid (``invalid_reason``) — the official
         reward and ``status`` are never rewritten.
+
+        r4 E3 additions (spec-r4 §3.2, all flagged-only, ``invalid_reason`` stays None): ② an
+        ``offseed.jsonl`` record for this cell's task page inside the attempt window discloses
+        ``off_seed_navigation``; ③ zero reward records disclose ``zero_reward_events``, or
+        ``episode_never_started`` when no ``epstart.jsonl`` beacon fired in the window either
+        (细分"从未启动"vs"已启动无奖励"; one reason replaces the other, never both).  Disclosure ①
+        (``status == timeout`` with zero navigations) is applied by :meth:`_execute_cell`, which is
+        where the final status is known.
         """
         log_scan = scan_cell_log(self._stdout_log_path(cell, attempt=attempt), subdomain=cell.subdomain, seed=cell.seed)
         reward_scan = scan_cell_rewards(
@@ -1196,6 +1318,19 @@ class Orchestrator:
             finished_at=finished_at,
         )
         scan = log_scan.merge(reward_scan)
+
+        path_prefix = BEACON_PATH_PREFIX.format(subdomain=cell.subdomain)
+        window = _epoch_window(started_at, finished_at)
+        offseed_records = _reward_lines(self.exp_dir / OFFSEED_FILENAME)
+        if match_records(path_prefix, window, offseed_records):
+            scan = scan.merge(CellScan(flagged=True, flag_reasons=(REASON_OFF_SEED,)))
+        if scan.reward_records == 0:
+            epstart_records = _reward_lines(self.exp_dir / EPSTART_FILENAME)
+            if match_records(path_prefix, window, epstart_records):
+                scan = scan.merge(CellScan(flagged=True, flag_reasons=(REASON_ZERO_REWARD,)))
+            else:
+                scan = scan.merge(CellScan(flagged=True, flag_reasons=(REASON_EP_NEVER_STARTED,)))
+
         if scan.invalid_reason:
             logger.warning(
                 "orchestrator: SECURITY EVENT for %s -> cell invalid (%s); navigations=%s reward_records=%s",
@@ -1206,10 +1341,11 @@ class Orchestrator:
             )
         elif scan.flagged:
             logger.warning(
-                "orchestrator: %s flagged (renavigation=%s reward_records=%s; V3/V4 disclosed, official reward kept)",
+                "orchestrator: %s flagged (renavigation=%s reward_records=%s reasons=%s; V3/V4 + r4-E disclosed, official reward kept)",
                 cell.label,
                 scan.task_url_navigations,
                 scan.reward_records,
+                ",".join(scan.flag_reasons) or "-",
             )
         return scan
 
@@ -1304,6 +1440,10 @@ class Orchestrator:
     def _write_manifest(self) -> None:
         rows = metrics_module.load_rows(self.results_path) if self.results_path.is_file() else []
         summary = metrics_module.summarize(rows, tasks=self.stage_tasks, exp_id=self.exp_id)
+        # plan-r4 §5 全局累计护栏：每次调用（含断点续跑）的实际执行数入 manifest，跨调用累计可审计。
+        # 执行行 = 带 goal 的行（no_goal 行没有 Hercules 子进程）；Σ>144 即量化披露（纪律条款，
+        # 不阻断——结构性最坏 146 = M1 16 + M2 130，偏差 +2 全为 pilot 域重试）。
+        cumulative_runs = sum(1 for row in rows if row.get("goal") is not None)
         manifest: dict[str, Any] = {
             "exp_id": self.exp_id,
             "git_rev": git_rev(),
@@ -1321,11 +1461,21 @@ class Orchestrator:
                 "stage_plan": tasks_module.STAGE_RUNS[self.stage],
                 "retry_budget": RETRY_BUDGET[self.stage],
                 "cap": R2_BUDGET_CAP,
+                "cumulative_hercules_used": cumulative_runs,
+                "cumulative_cap": R2_BUDGET_CAP,
+                "cumulative_over_cap": cumulative_runs > R2_BUDGET_CAP,
             },
             "cells": [{"task_id": cell.task_id, "seed": cell.seed} for cell in plan_cells(self.exp_id, self.stage, tasks=self.tasks, force=True)],
             "metrics": summary.as_dict(),
             "finished_at": _now(),
         }
+        if cumulative_runs > R2_BUDGET_CAP:
+            logger.warning(
+                "orchestrator: cumulative Hercules runs for %s = %s exceed the global cap %s (plan-r4 §5: quantified disclosure, never a silent window split)",
+                self.exp_id,
+                cumulative_runs,
+                R2_BUDGET_CAP,
+            )
         if self.provider is not runner_module.DEEPSEEK:
             # 口径披露（r2）：非默认 provider 时 manifest 追加 provider 名与实际模型；deepseek 现状
             # 的 manifest 逐字节不变（model_name/llm_base_url 已隐含披露）。
@@ -1387,6 +1537,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--disable-sandbox", action="store_true", help="E5: inject SANDBOX_DISABLED=true (a blocked attempt still invalidates the cell)")
     parser.add_argument("--assert-discipline", action="store_true", help="R3-6/F: PLANNER_ASSERT_DISCIPLINE=true planner prompt preamble")
+    # -- r4 switch set (spec-r4 §1/§2/§4); all default off (= r3 parity), headline turns them on ----
+    parser.add_argument("--md-extended", action="store_true", help="R4-A: MD_INTERACTIVE_EXTENDED=true, extended interactive-element table (default off = r3 parity)")
+    parser.add_argument("--verify-before-done", action="store_true", help="R4-B: VERIFY_BEFORE_DONE=true, one forced pre-termination verification round (default off = r3 parity)")
     args = parser.parse_args(argv)
 
     try:
@@ -1416,6 +1569,8 @@ def main(argv: list[str] | None = None) -> int:
             smoke_cells=[cell for cell in args.smoke_cells.split(",") if cell.strip()],
             provider=args.provider,
             max_cells=args.max_cells,
+            md_extended=args.md_extended,
+            verify_before_done=args.verify_before_done,
         )
         return orchestrator.run()
     except (BenchmarkError, tasks_module.BenchmarkError, runner_module.RunnerError) as exc:

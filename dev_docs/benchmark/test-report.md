@@ -448,3 +448,96 @@ uv run python -m record2gherkin.benchmark.orchestrator \
 ### 14.7 脱敏红线复核
 
 本补记全部改动不读写任何 key 文件；`role_routing_env`/`write_agents_llm_config` 的"key 只走 env、配置文件永不落 key"红线代码未动（T10 断言 env 注入、既有 T7 断言文件无 key 继续生效）；测试使用的均为内存/临时假 key。
+
+## 15. r4 实现补记（spec-r4 / review-r4 必改 MF-1/2/3 修订全部落地；2026-09-24）
+
+> 范围：R4-A（`--md-extended`）、R4-B（`--verify-before-done`）、R4-E（无 flag 完整性必办包）、
+> plan-r4 §5 预算全局护栏 + 离线单测 T1–T10。**未跑真 LLM、未跑 Hercules、未做任何 git 操作**
+> （M1 pilot+smoke / M2 headline 由总编排执行，命令见 §15.5）。判分链零改动（审计见 §15.3）。
+
+### 15.1 测试结果（离线，无 key、零外网；T4 为本机回环 + 本地 chromium）
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest tests/record2gherkin -q` | **492 passed**（81.8s；r3 基线 456 + 新增 36 = 492，零丢失零跳过） |
+| `uv run pytest tests/record2gherkin/benchmark/test_r4_improvements.py -q` | **36 passed**（T1–T10 全覆盖；**T4 四条真浏览器用例真实执行**（chromium headless）：email-inbox extended 行/图标入表 + star/trash class 互异 + off 零出现 + find-greatest ≥4 数字卡 + book-flight get_input_fields class 锚） |
+| 引擎回归（AGENTS.md 焦点组）：`pytest tests/test_simple_hercules_langgraph.py tests/test_mcp_langgraph.py tests/test_llm_cli_aliases.py tests/test_cli_config_file.py -q` | **26 passed**（改动后跑，与基线一致） |
+| 格式 | 触碰文件全部 black(-l 200)/isort CLEAN（`record2gherkin/` 不在 Makefile fmt 目标内，按同参数手工校验通过） |
+| 判分链 diff 审计 | `build_result_row` 的 status/official_passed 语义、`fetch_reward`/`/latest`、`REWARD_HOOK_PATCH`、C1a 优先级、`_rate`/`overall`/`clean` diff 零语义改动；扫描器只增 flagged 标注（`flag_reasons` 恒伴 `invalid_reason=None`） |
+
+T1–T10 → 测试函数对照：T1 = `test_t1_*`（2，fresh 进程验 relevant_keys + singleton getter）；T2 = `test_t2_*`（5，键集恰 16/零注入/manifest 三新键/latency 回归/预算累计账）；T3 = `test_t3_*`（6，off golden 逐字节 + 收录 + role + 150 上限 + off 不截断 + MF-1）；T4 = `TestT4RealBrowser`（4）；T5 = `test_t5_*`（4）；T6 = `test_t6_*`（2）；T7 = `test_t7_*`（6，含 r3 形态回放恰 6 格）；T8 = `test_t8_*`（4）；T9 = `test_t9_*`（3）。共 36。
+
+### 15.2 off 基线 golden 证明（A 类感知变更默认 off = r3 逐字节）
+
+1. **flatten off golden（T3a/T9a）**：迁移前用现实现（`get_interactive_elements.py` L45–129 原文，提取脚本留档 `dev_runs/r4_impl/capture_golden.py`，gitignore 区）对固定合成树（role=button、裸 md div、无 md 节点、**死分支 role-only 节点**、300 字截断、父 name 继承）产出 golden JSON；迁移后 `flatten_interactive_nodes(tree, extended=False)` 的 `json.dumps` 输出与 golden **逐字节相等**，且全部条目无 `class` 键——allowed_keys 无条件增 `class`（review-r4 MF-1）对 off 零影响（compact 按 `key in node` 过滤，off 抓取属性表无 class）。
+2. **真实页面 off 复现（T4）**：off 模式 email-inbox 终表零行/零图标、全表无 `class` 键（r3 "Interactive elements list is empty" 症状形态）；extended 模式 `.email-thread` 行、`.star`/`.trash` 图标（各 ≥2 且 class 值互异）、find-greatest ≥4 数字卡全部带 md 入表——**注入层假设成立，§1.3 的 `isInteractiveElement` 降级修补未触发、零改动**。
+3. **补丁层 off golden（T8a）**：`patch_core_js(..., offseed_beacon=False)` 与 r3 版函数输出逐字节相等；beacon 为纯 append（T8b 前缀字节不变）。披露口径（review-r4 S2）：**默认运行**的引擎与判分行为 = r3 逐字节；E1/E2 信标恒开使 core.js 交付字节与 r3 不同（无判分影响，页面 load 期一次 fetch POST + 服务端 append-only 记录）。
+4. **E 类对已有格零影响（T7d）**：干净行（1 次导航 + 1 条合法奖励 + 无 beacon 记录）扫描零标注；三条 r4 披露全部 flagged-only（`invalid_reason` 恒 None，T7a/T7b/T7c 锁定）。
+
+### 15.3 r4 引擎/harness 改动文件清单（全部为 plan-r4 §1 采纳项落点）
+
+| 文件 | 改动 |
+|---|---|
+| `testzeus_hercules/config.py` | relevant_keys + `MD_INTERACTIVE_EXTENDED`/`VERIFY_BEFORE_DONE`；`_finalize_defaults` 两个 setdefault `"false"`；+`get_md_interactive_extended()`/`get_verify_before_done()`（§1.1/§2.1） |
+| `testzeus_hercules/core/tools/get_interactive_elements.py` | L45–129 原样提为模块级 `flatten_interactive_nodes(root, *, extended, max_nodes=150)` + 常量 `INTERACTIVE_ROLES_BASE`/`INTERACTIVE_TAGS_BASE`/`EXTENDED_TAGS`/`EXTENDED_ROLES`/`EXTENDED_IDENTITY_KEYS`；`compact_interactive_node` allowed_keys **无条件增 `"class"`**（MF-1）；extended 收录判定 + 150 上限（超限 `[R2G_MD_TRUNCATED]` warning，无哨兵节点，off 不设上限）；父 name/title 继承与 compact/`json.dumps`/空表返回逐字节保留（§1.2） |
+| `testzeus_hercules/utils/get_detailed_accessibility_tree.py` | `__fetch_dom_info` attributes 表在 `MD_INTERACTIVE_EXTENDED=="true"` 时 append `"class"`（§1.3）；`__inject_attributes`/`isInteractiveElement` **零改动**（T4 实证注入层已覆盖，降级修补未触发）；披露：class 追加同样影响 `get_input_fields`（判分中立，T4 book-flight 锚已验证 off 无 class、extended 有） |
+| `testzeus_hercules/core/simple_hercules.py` | `AgentState` +`verify_rounds`；initial state +`"verify_rounds": 0`；模块级 `_VERIFY_STEP`（逐字，含"禁读 reward 全局"红线注记 = review-r4 S1）；+`_verify_gate_node`（`[R2G_VERIFY]` warning）；`_route_after_planner` 最前插 verify 分支（flag 现取现读、硬上限 `verify_rounds < 1`）；`_build_graph` +verify 节点 + `add_edge("verify","executor")`（§2.2）；planner prompt / junit 判定零改动 |
+| `record2gherkin/benchmark/miniwob_server.py` | `INTEGRITY_BEACON_PATCH`（spec §3.1 逐字）；`patch_core_js(..., offseed_beacon=False)` 追加序 A→B→cue→beacon，off=r3 字节；`BeaconLog`（append-only、per-line flush、首写创建）；POST `/__r2g_offseed`/`/__r2g_epstart`（尽力 JSON、坏 body 空串兜底、恒 204、无 body 头合规）；beacon 文件落 `<exp_root>/`（rewards 文件同目录）；`--offseed-beacon` CLI；`/healthz` 形状不变（§3.1） |
+| `record2gherkin/benchmark/orchestrator.py` | CLI +`--md-extended`/`--verify-before-done`；`Orchestrator` +两参 + `offseed_beacon=True` 常量；`_child_extra_env` +两新 env（flag 门控）；flags +`md_interactive_extended`/`verify_before_done`/`offseed_beacon` 三键，**`nav_max_tokens` 仅在传参时写入**（§4）；`CellScan` +`flag_reasons`（合并语义叠加）+ `REASON_OFF_SEED`/`REASON_ZERO_REWARD`/`REASON_EP_NEVER_STARTED` + `match_records`/`_epoch_window`；`_scan_cell` ②offseed 归因 ③零事件/never-started 细分；`_execute_cell` ①nav==0∧timeout flagged + `reward_records` 入行；`start_miniwob_server(..., offseed_beacon)` 恒传 True；manifest `budget` +`cumulative_hercules_used`/`cumulative_cap`/`cumulative_over_cap` + Σ>144 warning（plan-r4 §5 护栏）；docstring 增 r4 段 |
+| `record2gherkin/benchmark/metrics.py` | `ROW_KEYS` +`reward_records`（披露键，不入分母）；`Summary` +`zero_reward_cells`（latest 行 `reward_records==0`，`{"task_id","seed","status"}` 按 task_id 排序、>50 截断）+`zero_reward_cells_total`；`zero_reward_cell_list` + `summarize`/`as_dict` 接线；`overall`/`clean`/`invalid_cells` 零改动（§3.3） |
+| `tests/record2gherkin/benchmark/test_r4_improvements.py` | 新增，T1–T10 共 36 条（§15.1 对照表） |
+
+### 15.4 实现口径与已知问题（5 条，均不阻塞核心目标）
+
+1. **spec §1.2 条件块与 T3(b) 自相矛盾，按 T3(b)/plan 裁定**：spec 字面把 `EXTENDED_TAGS` 并入 `tag_hit` 的 tag 集合，会使"无任何 identity 键的 `{md, tag:'div'}`"（T3(b) 明令不收录）经 tag_hit 入表、`extra_hit` 沦为冗余。按 plan-r4 §1-R4-A①"须携带 identity 之一，杜绝无标识节点灌水"与 spec §5-T3(b) 绑定断言实现：extended 标签**只**经 `extra_hit`（identity 门控）收录，off 等价性不受影响（V5 逐条比对仍成立）。
+2. **spec T6"executor 恰执行 2 次"与其自述执行序 planner→verify→executor→planner→END 不相容**（该序只含 1 次 executor）。以执行序与语义为准（实现说明亦写入测试 docstring）：核验步经既有 executor 路径恰执行 1 次、`_VERIFY_STEP` 出现在该次执行的状态、`verify_rounds` 全程 ≤1、核验后 planner 改 `is_passed=false` → 直接 END。
+3. **r3 既有断言适配 4 处（均由 spec-r4 §4 强制，非行为回归）**：`test_f23…`/`test_t11_default_flags_are_all_off`/`test_t11_manifest_records_flags` 的 manifest `flags` 精确键集断言扩为 r3 十三键 + r4 三新键，且 `nav_max_tokens` 未传参时**键缺省**（spec-r4 §4/§0.4：摘除 no-op flag 后不再"声明在位"）；`test_t12…` 的 `flags["nav_max_tokens"]==0` 改为键缺省断言。语义断言（off 值、预算、smoke 规则）一字未改；其余 r3 测试零修改全绿。
+4. **"Its Empty, try something else" 文案分支为不可达死代码**（r3 亦然）：`json.dumps` 恒返回非空串，空表实际返回 `"[]"`。r4 原样保留未触碰，T9 锁定空表输出与 r3 逐字节一致（`"[]"`）。
+5. **`make fmt` 会顺带重排 6 个本轮范围外文件**（`tests/test_simple_hercules_langgraph.py`、`base_nav_agent.py`、`multimodal_base_nav_agent.py`、`config_env_loader.py`、`state_handler.py`、`litellm_helper.py`——上游从未按 line-length 200 归一化，`make lint` 依赖 `make fmt` 故必然触发）。本轮已全部还原、保持工作区改动严格限于声明落点；触碰文件单独跑 black/isort 校验通过。附注（不在本轮处理）：总编排若跑 `make lint`，请勿把这 6 个文件的纯格式 diff 混入 r4 功能提交。
+6. （披露义务预告，待 M1/M2 实测后填充：① 扩表前后 md 表长度统计与 `[R2G_MD_TRUNCATED]` 计数、`class` 对 get_input_fields 的影响面；② B 核验轮触发数与 junit↔官方不一致对照（r3 的 24 假阳性 → r4 实测值）；③ offseed/epstart/零事件清单及"只披露不改判"确认；④ M1 冒烟 A kill-switch 二选一判定记录。）
+
+### 15.5 总编排执行 r4 的完整命令
+
+r3 十项保留但**不含 `--nav-max-tokens`**（安全复审 §5 实证 no-op；manifest 亦不再记该键）；断点续跑=重跑同命令；预算全局护栏见 plan-r4 §5（manifest `budget.cumulative_*` 逐调用入账，Σ>144 量化披露，禁拆窗）。
+
+```bash
+# 0) 预演（不进程、不写文件、跳过 C1c 预检）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r4 --stage full --dry-run --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --md-extended --verify-before-done
+
+# 1) M1 pilot + A/B 冒烟（最坏 16 执行 = pilot 10 + 重试 2 + smoke 4；smoke 永不重试）
+#    A 冒烟 kill-switch 判据（spec 验收 3）：email-inbox-forward / email-inbox-star-reply 两格
+#    stdout 出现对 md 表内条目（email-thread/star/trash 类）的成功
+#    `Executing ClickElement with "[md='…']"`（同 md 不落 not-found）→ A 进 headline；
+#    否则去掉 --md-extended 并固化放弃声明。B 判据：每格 `[R2G_VERIFY]` ≤1 次、无 planner 循环；
+#    表长遥测：`[R2G_MD_TRUNCATED]` 出现次数 = 0；无 402。
+#    （email 冒烟格同时是 A 的 email 先验 + B 的 junit 诚实化观察格 email-inbox-delete。）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r4 --stage pilot --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --md-extended --verify-before-done \
+  --smoke-cells email-inbox-forward,email-inbox-star-reply,click-link,email-inbox-delete \
+  --max-cells <按5h窗口配速>
+
+# 2) M2 headline full（125 + 重试 5 = 130 ≤ 单次调用上限；主线累计目标 ≤144；flags 全集入 manifest，
+#    无 nav_max_tokens 键）
+uv run python -m record2gherkin.benchmark.orchestrator \
+  --exp-id miniwob-r4 --stage full --provider glm \
+  --terminal-cue --single-start --role-routing --latency-env --template-notes \
+  --planner-timeout 150 \
+  --extra-tools --disable-sandbox --assert-discipline \
+  --md-extended --verify-before-done \
+  --max-cells <按5h窗口配速，单段可达140>
+```
+
+默认命令（无 r4 flags）= r3 引擎与判分行为逐字节复现 + R4-E 披露增强（`offseed_beacon` 恒开，判分中立）；M4/M5 ablation 臂仍为待批另计（spec-r4 §6），命令模板同 §14.6 D 臂 + 独立 exp-id/exp-root。
+
+### 15.6 脱敏红线复核
+
+`KEY="$(cat LLM-Key.txt)"; grep -rl -- "$KEY" dev_runs/r4_impl record2gherkin tests/record2gherkin dev_docs` **零命中**；GLM-Key.txt 全值前缀同法扫描零命中。两新 flag 与 E 类信标均不读写任何 key 文件；`role_routing_env`/`write_agents_llm_config` 的"key 只走 env"红线代码未动。
