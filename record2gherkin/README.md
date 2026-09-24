@@ -43,7 +43,7 @@ uv run python -m record2gherkin analyze run1/opt [--llm]
 
 ## 演示与测试注意
 
-- 跑测试只用一条命令：`uv run pytest tests/record2gherkin -q`（本机 292 passed；recorder/cli 分开按序子集运行会因 session 级 playwright 冲突而误红；新克隆环境为 280 passed + 12 skipped——`test_pipeline_d1` 依赖 gitignored 的录制产物，属预期）
+- 跑测试只用一条命令：`uv run pytest tests/record2gherkin -q`（本机 492 passed；子集乱序会因 session 级 playwright 冲突误红；新克隆环境因 gitignored 录制产物少量 skip 属预期）
 - **现场演示不要录制多页（MPA）站点**：注入 JS 随文档导航销毁，record 会干净退出（exit 2）不落脏数据。用本地 MiniShop demo（`record2gherkin/evaluation/demo_server.py`）或 file:// fixture；多页支持是 v1 明确的 scope out
 
 ## 安全

@@ -3,6 +3,25 @@
 
 # 💪 Hercules
 
+> ## 🎯 本 fork 的二开增量：「录制即用例」AI E2E 测试工具
+>
+> 在 Hercules 执行内核之上新增 `record2gherkin/` 包（**492 项测试全绿**），四条命令串起 **录制 → 蒸馏 → 语义执行 → 失败归因** 全链路：
+>
+> ```bash
+> uv run python -m record2gherkin record "http://localhost:3000" --out events.json   # 注入式事件录制
+> uv run python -m record2gherkin generate events.json --out test.feature            # 确定性规则蒸馏（骨架层零 LLM）
+> uv run python -m record2gherkin run test.feature --out-dir run1                    # Hercules 子进程语义执行
+> uv run python -m record2gherkin analyze run1/opt                                   # 规则签名优先失败归因
+> ```
+>
+> **核心结果**：
+> - **UI 变异实验**（6 流程 × 5 变异 × 2 方法）：生成用例在标识符随机化下存活率 **6/6**，selector 式基线 **0/6**（主指标 1.00 vs 0.667）——语义自愈对比传统脚本的核心卖点被量化验证
+> - **MiniWoB++ 公开基准**（全 125 任务、零样本、文本 DOM、单 seed、页面原生判分）：四轮迭代 **43.2% → 46.4% → 47.2% → 61.6%**，越出同类零样本 GPT-4 级 agent 公开成绩带（47-60%）；每轮改进均有失败分析、独立审查与防作弊安全闭环背书（含归因修正：如发现端点忽略 max_tokens 的 no-op 改动如实改写归因）
+> - 工程资产：确定性蒸馏（事实回查防幻觉）、13 条错误签名归因器、可复现实验 harness（seed 派生/断点续跑/预算护栏/双 key 脱敏）、全程文档固化 `dev_docs/`
+>
+> 详见 [`record2gherkin/README.md`](record2gherkin/README.md) 与 [`dev_docs/`](dev_docs/)（四轮报告/安全审查/决策日志全公开）。
+
+
 [![PyPI Total Downloads](https://static.pepy.tech/badge/testzeus-hercules)](https://pepy.tech/projects/testzeus-hercules)
 ![Docker Pulls](https://img.shields.io/docker/pulls/testzeus/hercules)
 [![CI Test](https://github.com/test-zeus-ai/testzeus-hercules/actions/workflows/main-test.yml/badge.svg)](https://github.com/test-zeus-ai/testzeus-hercules/actions/workflows/main-test.yml)
